@@ -198,8 +198,10 @@ body {
   bottom: -16px;
   z-index: 1;
   min-height: 20px;
+  width: 128px;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   padding: 0 10px;
   background: rgba(18, 19, 25, 0.68);
   border: 2px solid rgba(26, 29, 36, 0.82);
@@ -208,7 +210,11 @@ body {
 }
 
 .reset-tag-text {
-  font-size: 9px;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  white-space: nowrap;
   line-height: 1;
   color: #fff4e8;
   text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.18);
@@ -244,14 +250,15 @@ body {
 
 .hide {
   position: absolute;
-  top: 2px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
+  top: 58px;
+  right: -10px;
+  width: 28px;
+  height: 28px;
   border: 0;
   background: rgba(18,18,22,0.28);
   color: #f7ead8;
   font: inherit;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
   clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
