@@ -3,6 +3,7 @@ npm-debug.log*
 package-lock.tmp
 dist/
 out/
+release/
 
 # Electron / local runtime data
 .DS_Store
@@ -10,4 +11,3 @@ Thumbs.db
 
 # Local screenshots or experiments
 *.log
-

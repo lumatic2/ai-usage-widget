@@ -6,10 +6,12 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "capture-preview": "electron ./scripts/capture-preview.js"
+    "capture-preview": "electron ./scripts/capture-preview.js",
+    "dist": "electron-packager . \"Codex Pixel Widget\" --platform=win32 --arch=x64 --out=release --overwrite && powershell -NoProfile -Command \"if (Test-Path 'release/Codex Pixel Widget-win32-x64.zip') { Remove-Item 'release/Codex Pixel Widget-win32-x64.zip' -Force }; Compress-Archive -Path 'release/Codex Pixel Widget-win32-x64/*' -DestinationPath 'release/Codex Pixel Widget-win32-x64.zip'\""
   },
   "devDependencies": {
     "@fontsource/silkscreen": "^5.2.6",
+    "@electron/packager": "^19.1.0",
     "electron": "^37.2.0"
   }
 }

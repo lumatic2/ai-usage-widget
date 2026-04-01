@@ -7,16 +7,18 @@ It runs as a small transparent Electron window, stays on top, can be dragged any
 - `CODEX`
 - `5-HOUR` usage
 - `WEEKLY` usage
-- reset time tags for both limits
+- reset tags for both limits
 
 ![Codex Pixel Widget Preview](./assets/widget-screenshot.png)
 
-## Preview
+## Features
 
 - Pixel-style floating widget
 - Frameless transparent window
+- Draggable and always-on-top
 - System tray integration
 - Auto-refresh from local Codex auth/session files
+- Portable Windows build support
 
 ## Requirements
 
@@ -24,7 +26,7 @@ It runs as a small transparent Electron window, stays on top, can be dragged any
 - Node.js 24+
 - An active Codex login in `~/.codex/auth.json`
 
-## Install
+## Quick Start
 
 ```powershell
 git clone https://github.com/Mod41529/codex-pixel-widget.git
@@ -33,18 +35,32 @@ npm install
 npm start
 ```
 
-## Manual Start
+## Run Manually
 
 ```powershell
 cd codex-pixel-widget
 npm start
 ```
 
-Or run:
+Or:
 
 ```powershell
 .\start_codex_widget.ps1
 ```
+
+## Build a Windows `.exe`
+
+```powershell
+npm install
+npm run dist
+```
+
+Output:
+
+- `release/Codex Pixel Widget-win32-x64/Codex Pixel Widget.exe`
+- `release/Codex Pixel Widget-win32-x64.zip`
+
+This is a portable build. No installer is required.
 
 ## Auto Start
 
@@ -60,7 +76,7 @@ Runtime settings are stored at:
 
 `C:\Users\1\AppData\Roaming\codex-widget-electron\widget\settings.json`
 
-Current settings include:
+Settings include:
 
 - window width / height
 - window x / y position
@@ -84,13 +100,14 @@ No tokens are stored in this repository. Credentials stay on the local machine.
 
 ## Development
 
-Project structure:
+Important files:
 
 - `main.js`
 - `preload.js`
 - `renderer/index.html`
 - `renderer/styles.css`
 - `renderer/renderer.js`
+- `scripts/capture-preview.js`
 
 ## License
 
