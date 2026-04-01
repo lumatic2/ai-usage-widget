@@ -9,6 +9,8 @@ It runs as a small transparent Electron window, stays on top, can be dragged any
 - `WEEKLY` usage
 - reset time tags for both limits
 
+![Codex Pixel Widget Preview](./assets/widget-screenshot.png)
+
 ## Preview
 
 - Pixel-style floating widget
@@ -72,6 +74,13 @@ Current settings include:
 - Reads recent rollout/session data from `~/.codex/sessions`
 
 No tokens are stored in this repository. Credentials stay on the local machine.
+
+## Security
+
+- This repository does **not** contain your Codex tokens or `auth.json`
+- The app reads `~/.codex/auth.json` locally at runtime to query usage
+- Anyone running modified code on your machine could read that local auth file, so only run code you trust
+- The current code only uses the token to fetch Codex usage data and does not write credentials back to disk
 
 ## Development
 

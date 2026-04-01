@@ -5,7 +5,8 @@
   "description": "Pixel-style floating Codex usage widget for Windows desktop.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "capture-preview": "electron ./scripts/capture-preview.js"
   },
   "devDependencies": {
     "@fontsource/silkscreen": "^5.2.6",
