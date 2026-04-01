@@ -1,0 +1,13 @@
+node_modules/
+npm-debug.log*
+package-lock.tmp
+dist/
+out/
+
+# Electron / local runtime data
+.DS_Store
+Thumbs.db
+
+# Local screenshots or experiments
+*.log
+

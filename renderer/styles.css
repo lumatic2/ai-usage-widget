@@ -1,0 +1,270 @@
+@import url("../node_modules/@fontsource/silkscreen/400.css");
+@import url("../node_modules/@fontsource/silkscreen/700.css");
+
+:root {
+  color-scheme: dark;
+  --bg: transparent;
+  --card: transparent;
+  --line: #20242e;
+  --shadow: rgba(0, 0, 0, 0.42);
+  --text: #fbf2e8;
+  --text-dark: #141416;
+  --codex-blue-top: #57c2ff;
+  --codex-blue-bottom: #1784d1;
+  --yellow-top: #ffd34d;
+  --yellow-bottom: #e59a00;
+  --green-top: #55d84c;
+  --green-bottom: #259b31;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  background: transparent;
+  font-family: "Silkscreen", Consolas, monospace;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.widget {
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px 34px;
+  overflow: visible;
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px 14px;
+  overflow: visible;
+}
+
+.title-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  margin: 0 0 12px 14px;
+}
+
+.title-text {
+  color: var(--text);
+  font-size: 34px;
+  line-height: 1;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2);
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.stack {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  padding-top: 0;
+}
+
+.pixel-card-wrap {
+  position: relative;
+}
+
+.pixel-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 74px;
+  padding: 0 14px 12px 14px;
+  border: 4px solid #1b2028;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+  box-shadow: 0 6px 0 #151922, 8px 10px 0 var(--shadow);
+  overflow: visible;
+}
+
+.pixel-bar::before {
+  content: "";
+  position: absolute;
+  inset: 4px 4px auto 4px;
+  height: 42%;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.pixel-bar::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 8px;
+  height: 6px;
+  background: rgba(21, 25, 34, 0.28);
+  clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+}
+
+.pixel-bar--codex {
+  background: linear-gradient(180deg, var(--codex-blue-top) 0%, var(--codex-blue-bottom) 100%);
+}
+
+.pixel-bar--codex::before {
+  background: linear-gradient(180deg, #b9ebff 0%, rgba(255,255,255,0) 100%);
+}
+
+.pixel-bar--gold {
+  background: linear-gradient(180deg, var(--yellow-top) 0%, var(--yellow-bottom) 100%);
+}
+
+.pixel-bar--gold::before {
+  background: linear-gradient(180deg, #ffe89d 0%, rgba(255,255,255,0) 100%);
+}
+
+.pixel-bar--green {
+  background: linear-gradient(180deg, var(--green-top) 0%, var(--green-bottom) 100%);
+}
+
+.pixel-bar--green::before {
+  background: linear-gradient(180deg, #c8ffb8 0%, rgba(255,255,255,0) 100%);
+}
+
+.bar-left {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.bar-icon {
+  width: 38px;
+  height: 38px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.18));
+  flex: 0 0 auto;
+}
+
+.bar-label,
+.bar-value {
+  position: relative;
+  z-index: 1;
+  color: var(--text);
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2);
+}
+
+.bar-label {
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.bar-value {
+  min-width: 96px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  line-height: 1;
+  background: linear-gradient(180deg, rgba(24, 27, 35, 0.96) 0%, rgba(34, 38, 48, 0.96) 100%);
+  border: 3px solid rgba(20, 21, 27, 0.96);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.06), inset 0 -3px 0 rgba(0,0,0,0.28);
+}
+
+.reset-tag {
+  position: absolute;
+  right: 16px;
+  bottom: -16px;
+  z-index: 1;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  background: rgba(18, 19, 25, 0.68);
+  border: 2px solid rgba(26, 29, 36, 0.82);
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.22);
+}
+
+.reset-tag-text {
+  font-size: 9px;
+  line-height: 1;
+  color: #fff4e8;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.bar-progress {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 8px;
+  height: 8px;
+  background: rgba(19, 20, 26, 0.45);
+  border: 2px solid rgba(18, 19, 25, 0.75);
+  clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+  z-index: 1;
+  overflow: hidden;
+}
+
+.bar-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(180deg, #fff0b3 0%, #fff0b3 35%, #8db3d9 35%, #6f93ba 100%);
+}
+
+.bar-progress-fill--gold {
+  background: linear-gradient(180deg, #ffe7a3 0%, #ffe7a3 45%, var(--yellow-top) 45%, var(--yellow-bottom) 100%);
+}
+
+.bar-progress-fill--green {
+  background: linear-gradient(180deg, #d6ffc7 0%, #d6ffc7 45%, var(--green-top) 45%, var(--green-bottom) 100%);
+}
+
+.hide {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: rgba(18,18,22,0.28);
+  color: #f7ead8;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.card:hover .hide {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hide:hover {
+  background: rgba(18,18,22,0.5);
+}

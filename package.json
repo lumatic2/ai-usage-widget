@@ -1,0 +1,14 @@
+{
+  "name": "codex-widget-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pixel-style floating Codex usage widget for Windows desktop.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@fontsource/silkscreen": "^5.2.6",
+    "electron": "^37.2.0"
+  }
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Pixel Widget</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="widget">
+      <section class="card drag">
+        <button class="hide no-drag" id="hideButton" aria-label="Hide widget">×</button>
+        <div class="title-row">
+          <span class="title-text">CODEX</span>
+        </div>
+        <div class="stack">
+          <div class="pixel-card-wrap">
+            <div class="pixel-bar pixel-bar--gold">
+              <div class="bar-left">
+                <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
+                <span class="bar-label">5-HOUR</span>
+              </div>
+              <span class="bar-value" id="primaryValue">--%</span>
+              <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--gold" id="primaryProgress"></span></div>
+            </div>
+            <div class="reset-tag" id="primaryResetTag"><span class="reset-tag-text" id="primaryReset">reset --</span></div>
+          </div>
+          <div class="pixel-card-wrap">
+            <div class="pixel-bar pixel-bar--green">
+              <div class="bar-left">
+                <img class="bar-icon" src="./icon-week.svg" alt="" draggable="false" />
+                <span class="bar-label">WEEKLY</span>
+              </div>
+              <span class="bar-value" id="secondaryValue">--%</span>
+              <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--green" id="secondaryProgress"></span></div>
+            </div>
+            <div class="reset-tag" id="secondaryResetTag"><span class="reset-tag-text" id="secondaryReset">reset --</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+  </html>
