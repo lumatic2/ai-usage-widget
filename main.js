@@ -4,6 +4,10 @@ const path = require('path');
 
 const APP_NAME = 'Codex Pixel Widget';
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const USAGE_FETCH_TIMEOUT_MS = 8000;
+const USAGE_FETCH_RETRIES = 2;
+const SESSION_SCAN_TTL_MS = 5 * 60 * 1000;
+const ROLLOUT_TAIL_READ_BYTES = 256 * 1024;
 const DEFAULT_SETTINGS = {
   width: 420,
   height: 320,
@@ -17,6 +21,13 @@ const DEFAULT_SETTINGS = {
 let mainWindow = null;
 let tray = null;
 let refreshTimer = null;
+let sessionCache = {
+  latestPath: null,
+  latestPathMtimeMs: 0,
+  latestMessageMtimeMs: 0,
+  sessionLabel: 'No recent session',
+  lastScanAt: 0
+};
 
 function getCodexHome() {
   const envRoot = (process.env.CODEX_HOME || '').trim();
@@ -102,13 +113,7 @@ async function fetchUsage() {
     headers['ChatGPT-Account-Id'] = tokens.account_id;
   }
 
-  const response = await fetch(CHATGPT_USAGE_URL, { headers });
-  if (response.status === 401 || response.status === 403) {
-    throw new Error('Codex login is expired. Please login again.');
-  }
-  if (!response.ok) {
-    throw new Error(`Usage request failed: ${response.status}`);
-  }
+  const response = await fetchUsageResponse(headers);
 
   const payload = await response.json();
   return {
@@ -116,6 +121,65 @@ async function fetchUsage() {
     primary: parseWindow(payload.rate_limit?.primary_window),
     secondary: parseWindow(payload.rate_limit?.secondary_window)
   };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableFetchError(error) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const message = String(error.message || '').toLowerCase();
+  return (
+    error.name === 'AbortError' ||
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    message.includes('socket') ||
+    message.includes('timed out')
+  );
+}
+
+async function fetchUsageResponse(headers) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= USAGE_FETCH_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), USAGE_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(CHATGPT_USAGE_URL, { headers, signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Codex login is expired. Please login again.');
+      }
+      if (!response.ok) {
+        const canRetryStatus = response.status === 429 || response.status >= 500;
+        if (canRetryStatus && attempt < USAGE_FETCH_RETRIES) {
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+        throw new Error(`Usage request failed: ${response.status}`);
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      const canRetry = isRetryableFetchError(error) && attempt < USAGE_FETCH_RETRIES;
+      if (canRetry) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+      if (error && error.name === 'AbortError') {
+        throw new Error('Usage request timed out. Please try again.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  if (lastError && lastError.name === 'AbortError') {
+    throw new Error('Usage request timed out. Please try again.');
+  }
+  throw lastError || new Error('Usage request failed');
 }
 
 function findLatestRolloutFile() {
@@ -151,35 +215,92 @@ function findLatestRolloutFile() {
   return latestPath;
 }
 
-function loadSessionLabel() {
-  const rolloutPath = findLatestRolloutFile();
-  if (!rolloutPath) {
-    return 'No recent session';
+function readRolloutTail(filePath) {
+  const stat = fs.statSync(filePath);
+  if (stat.size <= 0) {
+    return '';
   }
+  const bytesToRead = Math.min(stat.size, ROLLOUT_TAIL_READ_BYTES);
+  const start = stat.size - bytesToRead;
+  const buffer = Buffer.alloc(bytesToRead);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    fs.readSync(fd, buffer, 0, bytesToRead, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buffer.toString('utf8');
+}
 
-  const lines = fs.readFileSync(rolloutPath, 'utf8').split(/\r?\n/);
-  let latestMessage = null;
-  for (const line of lines) {
-    if (!line.trim()) {
+function findLatestUserMessage(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line || !line.trim()) {
       continue;
     }
     try {
       const payload = JSON.parse(line);
       const itemPayload = payload.payload || {};
       if (itemPayload.type === 'user_message' && itemPayload.message) {
-        latestMessage = String(itemPayload.message).trim();
+        return String(itemPayload.message).trim();
       }
     } catch {
       continue;
     }
   }
+  return null;
+}
+
+function loadSessionLabelFromRollout(rolloutPath) {
+  const tail = readRolloutTail(rolloutPath);
+  let latestMessage = findLatestUserMessage(tail.split(/\r?\n/));
+  if (!latestMessage) {
+    // Fallback: if older lines contain the latest user message, scan full file once.
+    const allLines = fs.readFileSync(rolloutPath, 'utf8').split(/\r?\n/);
+    latestMessage = findLatestUserMessage(allLines);
+  }
+  return latestMessage;
+}
+
+function loadSessionLabel() {
+  const now = Date.now();
+  const needsScan = !sessionCache.latestPath || now - sessionCache.lastScanAt >= SESSION_SCAN_TTL_MS;
+
+  if (needsScan) {
+    const latestPath = findLatestRolloutFile();
+    sessionCache.latestPath = latestPath;
+    sessionCache.latestPathMtimeMs = latestPath ? fs.statSync(latestPath).mtimeMs : 0;
+    sessionCache.lastScanAt = now;
+    sessionCache.latestMessageMtimeMs = 0;
+  }
+
+  const rolloutPath = sessionCache.latestPath;
+  if (!rolloutPath) {
+    sessionCache.sessionLabel = 'No recent session';
+    return 'No recent session';
+  }
+
+  const stat = fs.statSync(rolloutPath);
+  const pathChanged = stat.mtimeMs !== sessionCache.latestPathMtimeMs;
+  if (pathChanged) {
+    sessionCache.latestPathMtimeMs = stat.mtimeMs;
+    sessionCache.latestMessageMtimeMs = 0;
+  }
+  if (stat.mtimeMs === sessionCache.latestMessageMtimeMs) {
+    return sessionCache.sessionLabel;
+  }
+
+  const latestMessage = loadSessionLabelFromRollout(rolloutPath);
+  sessionCache.latestMessageMtimeMs = stat.mtimeMs;
 
   if (!latestMessage) {
+    sessionCache.sessionLabel = 'Recent session';
     return 'Recent session';
   }
 
   const compact = latestMessage.replace(/\s+/g, ' ');
-  return compact.length > 40 ? `${compact.slice(0, 39)}…` : compact;
+  sessionCache.sessionLabel = compact.length > 40 ? `${compact.slice(0, 39)}...` : compact;
+  return sessionCache.sessionLabel;
 }
 
 async function buildWidgetState() {
@@ -198,7 +319,9 @@ function sendState(state) {
     if (state.error) {
       tray.setToolTip(`Codex Widget\n${state.error}`);
     } else {
-      tray.setToolTip(`Codex Widget\n5H ${Math.round(state.primary.usedPercent)}% | WEEK ${Math.round(state.secondary.usedPercent)}%`);
+      const primaryPercent = Number.isFinite(state.primary?.usedPercent) ? Math.round(state.primary.usedPercent) : 0;
+      const secondaryPercent = Number.isFinite(state.secondary?.usedPercent) ? Math.round(state.secondary.usedPercent) : 0;
+      tray.setToolTip(`Codex Widget\n5H ${primaryPercent}% | WEEK ${secondaryPercent}%`);
     }
   }
 }
@@ -210,8 +333,8 @@ async function refreshState() {
   } catch (error) {
     sendState({
       planType: 'CODEX',
-      primary: { usedPercent: 0, resetAfterSeconds: null },
-      secondary: { usedPercent: 0, resetAfterSeconds: null },
+      primary: { usedPercent: null, resetAfterSeconds: null },
+      secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
       error: error instanceof Error ? error.message : String(error)
     });
@@ -284,8 +407,8 @@ ipcMain.handle('widget:get-initial-state', async () => {
   } catch (error) {
     return {
       planType: 'CODEX',
-      primary: { usedPercent: 0, resetAfterSeconds: null },
-      secondary: { usedPercent: 0, resetAfterSeconds: null },
+      primary: { usedPercent: null, resetAfterSeconds: null },
+      secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
       error: error instanceof Error ? error.message : String(error)
     };

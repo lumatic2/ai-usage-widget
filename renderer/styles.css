@@ -94,6 +94,36 @@ body {
   padding-top: 0;
 }
 
+.error-banner {
+  margin-top: 14px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(25, 12, 12, 0.82);
+  border: 3px solid #6f1d1d;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.2);
+}
+
+.error-label {
+  flex: 0 0 auto;
+  color: #ffd0d0;
+  font-size: 12px;
+  line-height: 1;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.error-text {
+  color: #ffeaea;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pixel-card-wrap {
   position: relative;
 }

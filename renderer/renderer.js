@@ -5,17 +5,25 @@ const secondaryProgress = document.getElementById('secondaryProgress');
 const primaryReset = document.getElementById('primaryReset');
 const secondaryReset = document.getElementById('secondaryReset');
 const hideButton = document.getElementById('hideButton');
+const errorBanner = document.getElementById('errorBanner');
+const errorText = document.getElementById('errorText');
 
 function render(state) {
-  const primary = Math.round(state.primary?.usedPercent ?? 0);
-  const secondary = Math.round(state.secondary?.usedPercent ?? 0);
+  const primary = state.primary?.usedPercent;
+  const secondary = state.secondary?.usedPercent;
 
-  primaryValue.textContent = `${primary}%`;
-  secondaryValue.textContent = `${secondary}%`;
-  primaryProgress.style.width = `${Math.max(0, Math.min(primary, 100))}%`;
-  secondaryProgress.style.width = `${Math.max(0, Math.min(secondary, 100))}%`;
+  primaryValue.textContent = formatPercent(primary);
+  secondaryValue.textContent = formatPercent(secondary);
+  primaryProgress.style.width = `${clampPercentForBar(primary)}%`;
+  secondaryProgress.style.width = `${clampPercentForBar(secondary)}%`;
   primaryReset.textContent = formatReset(state.primary?.resetAfterSeconds);
   secondaryReset.textContent = formatReset(state.secondary?.resetAfterSeconds);
+
+  const hasError = Boolean(state.error);
+  errorBanner.hidden = !hasError;
+  if (hasError) {
+    errorText.textContent = state.error;
+  }
 }
 
 function formatReset(totalSeconds) {
@@ -29,6 +37,20 @@ function formatReset(totalSeconds) {
     return `reset ${hours}h ${minutes}m`;
   }
   return `reset ${minutes}m`;
+}
+
+function formatPercent(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--%';
+  }
+  return `${Math.round(value)}%`;
+}
+
+function clampPercentForBar(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(Math.round(value), 100));
 }
 
 window.codexWidget.getInitialState().then(render);
