@@ -108,6 +108,20 @@ function clampInt(value, min, max, fallback) {
   return Math.min(Math.max(Math.round(num), min), max);
 }
 
+function getPublicSettings(settings) {
+  return {
+    displayMode: settings.displayMode,
+    enableUsageAlerts: settings.enableUsageAlerts,
+    usageAlertThresholds: settings.usageAlertThresholds,
+    refreshIntervalMs: settings.refreshIntervalMs,
+    openOnStartup: settings.openOnStartup,
+    alwaysOnTop: settings.alwaysOnTop,
+    fetchTimeoutMs: settings.fetchTimeoutMs,
+    fetchRetries: settings.fetchRetries,
+    sessionScanTtlMs: settings.sessionScanTtlMs
+  };
+}
+
 function clampBounds(bounds, settings) {
   const display = screen.getDisplayNearestPoint({ x: settings.x, y: settings.y });
   const workArea = display.workArea;
@@ -391,6 +405,23 @@ function applyOpenOnStartupSetting(settings) {
   });
 }
 
+function applyUpdatedSettings(partial) {
+  const previous = runtimeSettings || loadSettings();
+  const next = sanitizeSettings({ ...previous, ...partial });
+  runtimeSettings = next;
+  saveSettings(next);
+  applyOpenOnStartupSetting(next);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(next.alwaysOnTop);
+  }
+  if (refreshTimer && previous.refreshIntervalMs !== next.refreshIntervalMs) {
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(refreshState, next.refreshIntervalMs);
+  }
+  return getPublicSettings(next);
+}
+
 function notifyUsageThresholds(state) {
   if (!runtimeSettings?.enableUsageAlerts || !Array.isArray(runtimeSettings?.usageAlertThresholds)) {
     return;
@@ -558,10 +589,21 @@ ipcMain.handle('widget:get-initial-state', async () => {
   }
 });
 
+ipcMain.handle('widget:get-settings', async () => {
+  const settings = runtimeSettings || loadSettings();
+  return getPublicSettings(settings);
+});
+
+ipcMain.handle('widget:update-settings', async (_event, partial) => {
+  const safePartial = partial && typeof partial === 'object' ? partial : {};
+  const nextSettings = applyUpdatedSettings(safePartial);
+  await refreshState();
+  return nextSettings;
+});
+
 ipcMain.handle('widget:set-display-mode', async (_event, mode) => {
   const nextMode = normalizeDisplayMode(mode);
-  runtimeSettings = sanitizeSettings({ ...(runtimeSettings || loadSettings()), displayMode: nextMode });
-  saveSettings(runtimeSettings);
+  applyUpdatedSettings({ displayMode: nextMode });
   await refreshState();
   return { displayMode: nextMode };
 });

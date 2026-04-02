@@ -10,9 +10,9 @@
     <main class="widget">
       <section class="card drag">
         <button class="hide no-drag" id="hideButton" aria-label="Hide widget">×</button>
+        <button class="settings-toggle no-drag" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
         <div class="title-row">
           <span class="title-text">CODEX</span>
-          <button class="mode-chip no-drag" id="modeChip" type="button" aria-label="Toggle used or left mode">USED</button>
         </div>
         <div class="stack">
           <div class="pixel-card-wrap">
@@ -43,6 +43,36 @@
           <span class="error-text" id="errorText">Unable to refresh usage.</span>
           <button class="error-close no-drag" id="errorCloseButton" type="button" aria-label="Dismiss error">x</button>
         </div>
+        <section class="settings-panel no-drag" id="settingsPanel" hidden>
+          <div class="settings-row">
+            <label class="settings-label" for="displayModeSelect">Display</label>
+            <select class="settings-input" id="displayModeSelect">
+              <option value="used">USED</option>
+              <option value="left">LEFT</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="refreshSecondsInput">Refresh(s)</label>
+            <input class="settings-input" id="refreshSecondsInput" type="number" min="10" max="600" />
+          </div>
+          <div class="settings-row settings-row--check">
+            <label class="settings-label settings-label--check" for="alertsEnabledInput">Usage alerts</label>
+            <input id="alertsEnabledInput" type="checkbox" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="alertThresholdsInput">Thresholds</label>
+            <input class="settings-input" id="alertThresholdsInput" type="text" placeholder="30,60,80,90" />
+          </div>
+          <div class="settings-row settings-row--check">
+            <label class="settings-label settings-label--check" for="openOnStartupInput">Open at login</label>
+            <input id="openOnStartupInput" type="checkbox" />
+          </div>
+          <div class="settings-actions">
+            <button class="settings-btn" id="settingsSaveButton" type="button">Save</button>
+            <button class="settings-btn" id="settingsRefreshButton" type="button">Refresh</button>
+          </div>
+          <div class="settings-note">Auto-start applies to packaged app.</div>
+        </section>
       </section>
     </main>
     <script src="./renderer.js"></script>
