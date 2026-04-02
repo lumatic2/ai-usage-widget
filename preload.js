@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('codexWidget', {
   getInitialState: () => ipcRenderer.invoke('widget:get-initial-state'),
+  setDisplayMode: (mode) => ipcRenderer.invoke('widget:set-display-mode', mode),
+  refreshNow: () => ipcRenderer.invoke('widget:refresh-now'),
   onState: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('widget-state', listener);

@@ -44,6 +44,7 @@ let usageAlertState = {
   primary: { lastValue: null, notifiedThresholds: new Set() },
   secondary: { lastValue: null, notifiedThresholds: new Set() }
 };
+let lastGoodState = null;
 
 function getCodexHome() {
   const envRoot = (process.env.CODEX_HOME || '').trim();
@@ -58,6 +59,10 @@ function getAppDataDir() {
 
 function getSettingsPath() {
   return path.join(getAppDataDir(), 'settings.json');
+}
+
+function getLastErrorPath() {
+  return path.join(getAppDataDir(), 'last-error.txt');
 }
 
 function loadSettings() {
@@ -346,9 +351,16 @@ function loadSessionLabel() {
 async function buildWidgetState() {
   const usage = await fetchUsage();
   const displayMode = runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode;
+  let sessionLabel = 'Recent session';
+  try {
+    sessionLabel = loadSessionLabel();
+  } catch (error) {
+    // Session parsing failure should not block usage display.
+    sessionLabel = 'Recent session';
+  }
   return {
     ...usage,
-    sessionLabel: loadSessionLabel(),
+    sessionLabel,
     displayMode
   };
 }
@@ -424,16 +436,38 @@ function checkWindowThreshold(key, value, windowLabel) {
 async function refreshState() {
   try {
     const state = await buildWidgetState();
+    lastGoodState = state;
+    try {
+      if (fs.existsSync(getLastErrorPath())) {
+        fs.unlinkSync(getLastErrorPath());
+      }
+    } catch {
+      // Ignore best-effort cleanup failures.
+    }
     notifyUsageThresholds(state);
     sendState(state);
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    try {
+      fs.writeFileSync(getLastErrorPath(), `${new Date().toISOString()} ${errorMessage}\n`, 'utf8');
+    } catch {
+      // Ignore best-effort logging failures.
+    }
+    if (lastGoodState) {
+      sendState({
+        ...lastGoodState,
+        displayMode: runtimeSettings?.displayMode ?? lastGoodState.displayMode ?? DEFAULT_SETTINGS.displayMode,
+        error: errorMessage
+      });
+      return;
+    }
     sendState({
       planType: 'CODEX',
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
       displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     });
   }
 }
@@ -501,17 +535,40 @@ function createWindow() {
 
 ipcMain.handle('widget:get-initial-state', async () => {
   try {
-    return await buildWidgetState();
+    const state = await buildWidgetState();
+    lastGoodState = state;
+    return state;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (lastGoodState) {
+      return {
+        ...lastGoodState,
+        displayMode: runtimeSettings?.displayMode ?? lastGoodState.displayMode ?? DEFAULT_SETTINGS.displayMode,
+        error: errorMessage
+      };
+    }
     return {
       planType: 'CODEX',
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
       displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     };
   }
+});
+
+ipcMain.handle('widget:set-display-mode', async (_event, mode) => {
+  const nextMode = normalizeDisplayMode(mode);
+  runtimeSettings = sanitizeSettings({ ...(runtimeSettings || loadSettings()), displayMode: nextMode });
+  saveSettings(runtimeSettings);
+  await refreshState();
+  return { displayMode: nextMode };
+});
+
+ipcMain.handle('widget:refresh-now', async () => {
+  await refreshState();
+  return true;
 });
 
 ipcMain.on('widget:hide', () => {

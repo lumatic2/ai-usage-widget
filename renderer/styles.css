@@ -22,6 +22,10 @@
   user-select: none;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -72,6 +76,12 @@ body {
   background: rgba(17, 20, 28, 0.74);
   border: 2px solid rgba(34, 39, 48, 0.85);
   clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px), 0 5px);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mode-chip:hover {
+  background: rgba(27, 31, 42, 0.86);
 }
 
 .title-icon {
@@ -117,6 +127,7 @@ body {
   border: 3px solid #6f1d1d;
   clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
 }
 
 .error-label {
@@ -134,6 +145,26 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1 1 auto;
+}
+
+.error-close {
+  position: relative;
+  z-index: 3;
+  border: 0;
+  background: rgba(60, 20, 20, 0.75);
+  color: #ffdada;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 7px;
+  cursor: pointer;
+  pointer-events: auto;
+  clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+}
+
+.error-close:hover {
+  background: rgba(90, 24, 24, 0.88);
 }
 
 .pixel-card-wrap {

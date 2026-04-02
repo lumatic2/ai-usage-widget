@@ -12,7 +12,7 @@
         <button class="hide no-drag" id="hideButton" aria-label="Hide widget">×</button>
         <div class="title-row">
           <span class="title-text">CODEX</span>
-          <span class="mode-chip" id="modeChip">USED</span>
+          <button class="mode-chip no-drag" id="modeChip" type="button" aria-label="Toggle used or left mode">USED</button>
         </div>
         <div class="stack">
           <div class="pixel-card-wrap">
@@ -41,6 +41,7 @@
         <div class="error-banner" id="errorBanner" hidden>
           <span class="error-label">ERROR</span>
           <span class="error-text" id="errorText">Unable to refresh usage.</span>
+          <button class="error-close no-drag" id="errorCloseButton" type="button" aria-label="Dismiss error">x</button>
         </div>
       </section>
     </main>

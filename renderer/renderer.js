@@ -7,10 +7,15 @@ const secondaryReset = document.getElementById('secondaryReset');
 const hideButton = document.getElementById('hideButton');
 const errorBanner = document.getElementById('errorBanner');
 const errorText = document.getElementById('errorText');
+const errorCloseButton = document.getElementById('errorCloseButton');
 const modeChip = document.getElementById('modeChip');
+let currentDisplayMode = 'used';
+let currentErrorKey = null;
+let dismissedErrorKey = null;
 
 function render(state) {
   const displayMode = normalizeDisplayMode(state.displayMode);
+  currentDisplayMode = displayMode;
   const primary = resolveDisplayPercent(state.primary?.usedPercent, displayMode);
   const secondary = resolveDisplayPercent(state.secondary?.usedPercent, displayMode);
 
@@ -23,9 +28,13 @@ function render(state) {
   modeChip.textContent = displayMode.toUpperCase();
 
   const hasError = Boolean(state.error);
-  errorBanner.hidden = !hasError;
+  currentErrorKey = hasError ? String(state.error).trim() : null;
+  const shouldShowError = hasError && currentErrorKey !== dismissedErrorKey;
+  errorBanner.hidden = !shouldShowError;
   if (hasError) {
-    errorText.textContent = state.error;
+    errorText.textContent = currentErrorKey;
+  } else {
+    dismissedErrorKey = null;
   }
 }
 
@@ -76,4 +85,22 @@ window.codexWidget.onState(render);
 
 hideButton.addEventListener('click', () => {
   window.codexWidget.hide();
+});
+
+modeChip.addEventListener('click', async () => {
+  const nextMode = currentDisplayMode === 'used' ? 'left' : 'used';
+  try {
+    await window.codexWidget.setDisplayMode(nextMode);
+  } catch {
+    // If setting update fails, force a state refresh as fallback.
+    window.codexWidget.refreshNow();
+  }
+});
+
+errorCloseButton.addEventListener('click', () => {
+  if (currentErrorKey) {
+    dismissedErrorKey = currentErrorKey;
+  }
+  errorBanner.hidden = true;
+  window.codexWidget.refreshNow();
 });
