@@ -1,12 +1,17 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const {
+  computeDisplayPercent,
+  didUsageWindowReset,
+  getCrossedThresholds,
+  modeLabel,
+  normalizeDisplayMode,
+  sanitizeThresholds
+} = require('./lib/widget-core');
 
 const APP_NAME = 'Codex Pixel Widget';
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
-const USAGE_FETCH_TIMEOUT_MS = 8000;
-const USAGE_FETCH_RETRIES = 2;
-const SESSION_SCAN_TTL_MS = 5 * 60 * 1000;
 const ROLLOUT_TAIL_READ_BYTES = 256 * 1024;
 const DEFAULT_SETTINGS = {
   width: 420,
@@ -15,18 +20,29 @@ const DEFAULT_SETTINGS = {
   y: 40,
   alwaysOnTop: true,
   openOnStartup: true,
-  refreshIntervalMs: 60000
+  refreshIntervalMs: 60000,
+  displayMode: 'used',
+  usageAlertThresholds: [30, 60, 80, 90],
+  enableUsageAlerts: true,
+  fetchTimeoutMs: 8000,
+  fetchRetries: 2,
+  sessionScanTtlMs: 5 * 60 * 1000
 };
 
 let mainWindow = null;
 let tray = null;
 let refreshTimer = null;
+let runtimeSettings = null;
 let sessionCache = {
   latestPath: null,
   latestPathMtimeMs: 0,
   latestMessageMtimeMs: 0,
   sessionLabel: 'No recent session',
   lastScanAt: 0
+};
+let usageAlertState = {
+  primary: { lastValue: null, notifiedThresholds: new Set() },
+  secondary: { lastValue: null, notifiedThresholds: new Set() }
 };
 
 function getCodexHome() {
@@ -53,10 +69,7 @@ function loadSettings() {
 
   try {
     const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const merged = { ...DEFAULT_SETTINGS, ...raw };
-    merged.width = Math.max(DEFAULT_SETTINGS.width, Number(merged.width || DEFAULT_SETTINGS.width));
-    merged.height = Math.max(DEFAULT_SETTINGS.height, Number(merged.height || DEFAULT_SETTINGS.height));
-    return merged;
+    return sanitizeSettings({ ...DEFAULT_SETTINGS, ...raw });
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -64,6 +77,30 @@ function loadSettings() {
 
 function saveSettings(settings) {
   fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2), 'utf8');
+}
+
+function sanitizeSettings(raw) {
+  const merged = { ...DEFAULT_SETTINGS, ...raw };
+  merged.width = Math.max(DEFAULT_SETTINGS.width, Number(merged.width || DEFAULT_SETTINGS.width));
+  merged.height = Math.max(DEFAULT_SETTINGS.height, Number(merged.height || DEFAULT_SETTINGS.height));
+  merged.refreshIntervalMs = clampInt(merged.refreshIntervalMs, 10000, 10 * 60 * 1000, DEFAULT_SETTINGS.refreshIntervalMs);
+  merged.fetchTimeoutMs = clampInt(merged.fetchTimeoutMs, 2000, 60000, DEFAULT_SETTINGS.fetchTimeoutMs);
+  merged.fetchRetries = clampInt(merged.fetchRetries, 0, 5, DEFAULT_SETTINGS.fetchRetries);
+  merged.sessionScanTtlMs = clampInt(merged.sessionScanTtlMs, 30000, 60 * 60 * 1000, DEFAULT_SETTINGS.sessionScanTtlMs);
+  merged.displayMode = normalizeDisplayMode(merged.displayMode);
+  merged.usageAlertThresholds = sanitizeThresholds(merged.usageAlertThresholds);
+  merged.enableUsageAlerts = Boolean(merged.enableUsageAlerts);
+  merged.openOnStartup = Boolean(merged.openOnStartup);
+  merged.alwaysOnTop = Boolean(merged.alwaysOnTop);
+  return merged;
+}
+
+function clampInt(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.round(num), min), max);
 }
 
 function clampBounds(bounds, settings) {
@@ -142,10 +179,12 @@ function isRetryableFetchError(error) {
 }
 
 async function fetchUsageResponse(headers) {
+  const timeoutMs = runtimeSettings?.fetchTimeoutMs ?? DEFAULT_SETTINGS.fetchTimeoutMs;
+  const maxRetries = runtimeSettings?.fetchRetries ?? DEFAULT_SETTINGS.fetchRetries;
   let lastError = null;
-  for (let attempt = 0; attempt <= USAGE_FETCH_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), USAGE_FETCH_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(CHATGPT_USAGE_URL, { headers, signal: controller.signal });
       if (response.status === 401 || response.status === 403) {
@@ -153,7 +192,7 @@ async function fetchUsageResponse(headers) {
       }
       if (!response.ok) {
         const canRetryStatus = response.status === 429 || response.status >= 500;
-        if (canRetryStatus && attempt < USAGE_FETCH_RETRIES) {
+        if (canRetryStatus && attempt < maxRetries) {
           await sleep(400 * (attempt + 1));
           continue;
         }
@@ -162,7 +201,7 @@ async function fetchUsageResponse(headers) {
       return response;
     } catch (error) {
       lastError = error;
-      const canRetry = isRetryableFetchError(error) && attempt < USAGE_FETCH_RETRIES;
+      const canRetry = isRetryableFetchError(error) && attempt < maxRetries;
       if (canRetry) {
         await sleep(400 * (attempt + 1));
         continue;
@@ -264,7 +303,8 @@ function loadSessionLabelFromRollout(rolloutPath) {
 
 function loadSessionLabel() {
   const now = Date.now();
-  const needsScan = !sessionCache.latestPath || now - sessionCache.lastScanAt >= SESSION_SCAN_TTL_MS;
+  const sessionScanTtlMs = runtimeSettings?.sessionScanTtlMs ?? DEFAULT_SETTINGS.sessionScanTtlMs;
+  const needsScan = !sessionCache.latestPath || now - sessionCache.lastScanAt >= sessionScanTtlMs;
 
   if (needsScan) {
     const latestPath = findLatestRolloutFile();
@@ -305,9 +345,11 @@ function loadSessionLabel() {
 
 async function buildWidgetState() {
   const usage = await fetchUsage();
+  const displayMode = runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode;
   return {
     ...usage,
-    sessionLabel: loadSessionLabel()
+    sessionLabel: loadSessionLabel(),
+    displayMode
   };
 }
 
@@ -319,16 +361,70 @@ function sendState(state) {
     if (state.error) {
       tray.setToolTip(`Codex Widget\n${state.error}`);
     } else {
-      const primaryPercent = Number.isFinite(state.primary?.usedPercent) ? Math.round(state.primary.usedPercent) : 0;
-      const secondaryPercent = Number.isFinite(state.secondary?.usedPercent) ? Math.round(state.secondary.usedPercent) : 0;
-      tray.setToolTip(`Codex Widget\n5H ${primaryPercent}% | WEEK ${secondaryPercent}%`);
+      const displayMode = state.displayMode || runtimeSettings?.displayMode || DEFAULT_SETTINGS.displayMode;
+      const primaryPercent = computeDisplayPercent(state.primary?.usedPercent, displayMode);
+      const secondaryPercent = computeDisplayPercent(state.secondary?.usedPercent, displayMode);
+      tray.setToolTip(`Codex Widget\n${modeLabel(displayMode)} 5H ${primaryPercent}% | WEEK ${secondaryPercent}%`);
     }
   }
+}
+
+function applyOpenOnStartupSetting(settings) {
+  if (!app.isPackaged) {
+    return;
+  }
+  app.setLoginItemSettings({
+    openAtLogin: Boolean(settings.openOnStartup),
+    path: process.execPath
+  });
+}
+
+function notifyUsageThresholds(state) {
+  if (!runtimeSettings?.enableUsageAlerts || !Array.isArray(runtimeSettings?.usageAlertThresholds)) {
+    return;
+  }
+  if (state.error) {
+    return;
+  }
+
+  checkWindowThreshold('primary', state.primary?.usedPercent, '5-HOUR');
+  checkWindowThreshold('secondary', state.secondary?.usedPercent, 'WEEKLY');
+}
+
+function checkWindowThreshold(key, value, windowLabel) {
+  const currentValue = Number(value);
+  const windowState = usageAlertState[key];
+  if (!Number.isFinite(currentValue)) {
+    windowState.lastValue = null;
+    windowState.notifiedThresholds.clear();
+    return;
+  }
+
+  if (didUsageWindowReset(windowState.lastValue, currentValue)) {
+    windowState.notifiedThresholds.clear();
+  }
+
+  const crossed = getCrossedThresholds(windowState.lastValue, currentValue, runtimeSettings.usageAlertThresholds);
+  for (const threshold of crossed) {
+    if (windowState.notifiedThresholds.has(threshold)) {
+      continue;
+    }
+    windowState.notifiedThresholds.add(threshold);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: `Codex Usage Alert (${windowLabel})`,
+        body: `Usage reached ${threshold}% (${Math.round(currentValue)}%).`
+      }).show();
+    }
+  }
+
+  windowState.lastValue = currentValue;
 }
 
 async function refreshState() {
   try {
     const state = await buildWidgetState();
+    notifyUsageThresholds(state);
     sendState(state);
   } catch (error) {
     sendState({
@@ -336,6 +432,7 @@ async function refreshState() {
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
+      displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -367,7 +464,7 @@ function createTray() {
 }
 
 function createWindow() {
-  const settings = loadSettings();
+  const settings = runtimeSettings || loadSettings();
   const bounds = clampBounds({ x: settings.x, y: settings.y }, settings);
 
   mainWindow = new BrowserWindow({
@@ -395,7 +492,8 @@ function createWindow() {
   });
   mainWindow.on('move', () => {
     const [x, y] = mainWindow.getPosition();
-    const nextSettings = { ...loadSettings(), x, y };
+    const nextSettings = sanitizeSettings({ ...(runtimeSettings || settings), x, y });
+    runtimeSettings = nextSettings;
     saveSettings(nextSettings);
   });
   mainWindow.on('show', () => refreshState());
@@ -410,6 +508,7 @@ ipcMain.handle('widget:get-initial-state', async () => {
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
       sessionLabel: 'Offline',
+      displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
       error: error instanceof Error ? error.message : String(error)
     };
   }
@@ -422,11 +521,12 @@ ipcMain.on('widget:hide', () => {
 });
 
 app.whenReady().then(() => {
+  runtimeSettings = loadSettings();
+  applyOpenOnStartupSetting(runtimeSettings);
   createWindow();
   createTray();
   refreshState();
-  const settings = loadSettings();
-  refreshTimer = setInterval(refreshState, settings.refreshIntervalMs);
+  refreshTimer = setInterval(refreshState, runtimeSettings.refreshIntervalMs);
 });
 
 app.on('window-all-closed', (event) => {

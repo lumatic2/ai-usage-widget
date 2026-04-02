@@ -62,6 +62,18 @@ body {
   margin: 0 0 12px 14px;
 }
 
+.mode-chip {
+  margin-top: 6px;
+  min-width: 52px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1;
+  color: #efe7d9;
+  background: rgba(17, 20, 28, 0.74);
+  border: 2px solid rgba(34, 39, 48, 0.85);
+  clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px), 0 5px);
+}
+
 .title-icon {
   width: 28px;
   height: 28px;

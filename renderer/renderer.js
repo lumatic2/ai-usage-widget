@@ -7,10 +7,12 @@ const secondaryReset = document.getElementById('secondaryReset');
 const hideButton = document.getElementById('hideButton');
 const errorBanner = document.getElementById('errorBanner');
 const errorText = document.getElementById('errorText');
+const modeChip = document.getElementById('modeChip');
 
 function render(state) {
-  const primary = state.primary?.usedPercent;
-  const secondary = state.secondary?.usedPercent;
+  const displayMode = normalizeDisplayMode(state.displayMode);
+  const primary = resolveDisplayPercent(state.primary?.usedPercent, displayMode);
+  const secondary = resolveDisplayPercent(state.secondary?.usedPercent, displayMode);
 
   primaryValue.textContent = formatPercent(primary);
   secondaryValue.textContent = formatPercent(secondary);
@@ -18,6 +20,7 @@ function render(state) {
   secondaryProgress.style.width = `${clampPercentForBar(secondary)}%`;
   primaryReset.textContent = formatReset(state.primary?.resetAfterSeconds);
   secondaryReset.textContent = formatReset(state.secondary?.resetAfterSeconds);
+  modeChip.textContent = displayMode.toUpperCase();
 
   const hasError = Boolean(state.error);
   errorBanner.hidden = !hasError;
@@ -44,6 +47,21 @@ function formatPercent(value) {
     return '--%';
   }
   return `${Math.round(value)}%`;
+}
+
+function normalizeDisplayMode(mode) {
+  return String(mode || '').toLowerCase() === 'left' ? 'left' : 'used';
+}
+
+function resolveDisplayPercent(value, mode) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  const rounded = Math.max(0, Math.min(Math.round(value), 100));
+  if (mode === 'left') {
+    return 100 - rounded;
+  }
+  return rounded;
 }
 
 function clampPercentForBar(value) {

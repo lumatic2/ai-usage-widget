@@ -82,6 +82,13 @@ Settings include:
 - window x / y position
 - always-on-top
 - refresh interval
+- `displayMode` (`used` | `left`, default `used`)
+- `enableUsageAlerts` (`true` | `false`)
+- `usageAlertThresholds` (array of usage percentages, e.g. `[30,60,80,90]`)
+- `fetchTimeoutMs`
+- `fetchRetries`
+- `sessionScanTtlMs`
+- `openOnStartup` (applied on packaged app startup)
 
 ## How It Works
 
