@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, Notification } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, Notification, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -13,8 +13,9 @@ const {
 const APP_NAME = 'Codex Pixel Widget';
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const ROLLOUT_TAIL_READ_BYTES = 256 * 1024;
+const CLAUDE_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SETTINGS = {
-  width: 420,
+  width: 780,
   height: 320,
   x: 40,
   y: 40,
@@ -44,11 +45,20 @@ let usageAlertState = {
   primary: { lastValue: null, notifiedThresholds: new Set() },
   secondary: { lastValue: null, notifiedThresholds: new Set() }
 };
+let claudeUsageAlertState = {
+  primary: { lastValue: null, notifiedThresholds: new Set() },
+  secondary: { lastValue: null, notifiedThresholds: new Set() }
+};
 let lastGoodState = null;
+let claudeLastGoodState = null;
 
 function getCodexHome() {
   const envRoot = (process.env.CODEX_HOME || '').trim();
   return envRoot ? envRoot : path.join(process.env.USERPROFILE || app.getPath('home'), '.codex');
+}
+
+function getClaudeHome() {
+  return path.join(process.env.USERPROFILE || app.getPath('home'), '.claude');
 }
 
 function getAppDataDir() {
@@ -177,6 +187,296 @@ async function fetchUsage() {
     primary: parseWindow(payload.rate_limit?.primary_window),
     secondary: parseWindow(payload.rate_limit?.secondary_window)
   };
+}
+
+function createEmptyClaudeState(overrides = {}) {
+  return {
+    planType: 'CLAUDE',
+    primary: { usedPercent: null, resetAfterSeconds: null },
+    secondary: { usedPercent: null, resetAfterSeconds: null },
+    isConfigured: false,
+    needsLogin: false,
+    isCached: false,
+    error: null,
+    ...overrides
+  };
+}
+
+function loadClaudeCredentials() {
+  const credentialsPath = path.join(getClaudeHome(), '.credentials.json');
+  if (!fs.existsSync(credentialsPath)) {
+    return null;
+  }
+
+  const payload = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+  const oauth = payload.claudeAiOauth || {};
+  const accessToken = String(oauth.accessToken || '').trim();
+  const organizationUuid = String(payload.organizationUuid || '').trim();
+  if (!organizationUuid) {
+    throw new Error('Claude credentials are incomplete.');
+  }
+
+  return { accessToken, organizationUuid };
+}
+
+function loadClaudeSessionKey() {
+  try {
+    const settingsPath = getSettingsPath();
+    if (!fs.existsSync(settingsPath)) {
+      return null;
+    }
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const sessionKey = String(settings.claudeSessionKey || '').trim();
+    return sessionKey || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveClaudeSessionKey(key) {
+  const sessionKey = String(key || '').trim();
+  const settings = runtimeSettings || loadSettings();
+  const nextSettings = { ...settings, claudeSessionKey: sessionKey };
+  saveSettings(nextSettings);
+  runtimeSettings = sanitizeSettings(nextSettings);
+}
+
+function clearClaudeSessionKey() {
+  const settings = runtimeSettings || loadSettings();
+  if (!Object.prototype.hasOwnProperty.call(settings, 'claudeSessionKey')) {
+    return;
+  }
+  const nextSettings = { ...settings };
+  delete nextSettings.claudeSessionKey;
+  saveSettings(nextSettings);
+  runtimeSettings = sanitizeSettings(nextSettings);
+}
+
+function normalizeClaudeUtilization(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  if (numeric >= 0 && numeric <= 1) {
+    return Math.round(numeric * 100);
+  }
+  return Math.max(0, Math.min(Math.round(numeric), 100));
+}
+
+function parseClaudeWindow(windowPayload) {
+  if (!windowPayload || typeof windowPayload !== 'object') {
+    return { usedPercent: null, resetAfterSeconds: null };
+  }
+
+  const usedPercent = normalizeClaudeUtilization(windowPayload.utilization);
+  const resetTimestamp = Date.parse(windowPayload.resets_at || '');
+  const resetAfterSeconds = Number.isFinite(resetTimestamp)
+    ? Math.max(0, Math.round((resetTimestamp - Date.now()) / 1000))
+    : null;
+
+  return { usedPercent, resetAfterSeconds };
+}
+
+const CLAUDE_LOGIN_PARTITION = 'persist:claude-login';
+const CLAUDE_LOGIN_URL = 'https://claude.ai';
+const CLAUDE_CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+async function openClaudeLoginWindow() {
+  const loginSession = session.fromPartition(CLAUDE_LOGIN_PARTITION);
+  const loginWindow = new BrowserWindow({
+    width: 800,
+    height: 700,
+    show: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      partition: CLAUDE_LOGIN_PARTITION
+    }
+  });
+
+  loginWindow.webContents.setUserAgent(CLAUDE_CHROME_USER_AGENT);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (handler, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearInterval(cookiePoller);
+      clearTimeout(timeoutId);
+      loginWindow.removeAllListeners('closed');
+      if (!loginWindow.isDestroyed()) {
+        loginWindow.close();
+      }
+      handler(value);
+    };
+
+    const cookiePoller = setInterval(async () => {
+      try {
+        const cookies = await loginSession.cookies.get({ url: CLAUDE_LOGIN_URL, name: 'sessionKey' });
+        const sessionKey = String(cookies[0]?.value || '').trim();
+        if (sessionKey) {
+          saveClaudeSessionKey(sessionKey);
+          finish(resolve, sessionKey);
+        }
+      } catch {
+        // Ignore transient cookie access errors while login window is active.
+      }
+    }, 1000);
+
+    const timeoutId = setTimeout(() => {
+      finish(reject, new Error('Claude login timed out'));
+    }, 3 * 60 * 1000);
+
+    loginWindow.on('closed', () => {
+      if (!settled) {
+        finish(reject, new Error('Claude login window closed.'));
+      }
+    });
+
+    loginWindow.loadURL(CLAUDE_LOGIN_URL).catch((error) => {
+      finish(reject, error);
+    });
+  });
+}
+
+async function fetchClaudeUsageWithCookie(sessionKey, organizationUuid) {
+  const usageUrl = `https://claude.ai/api/organizations/${encodeURIComponent(organizationUuid)}/usage`;
+  const hiddenWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      partition: CLAUDE_LOGIN_PARTITION
+    }
+  });
+  hiddenWindow.webContents.setUserAgent(CLAUDE_CHROME_USER_AGENT);
+
+  const loginSession = session.fromPartition(CLAUDE_LOGIN_PARTITION);
+  const timeoutMs = Math.max(15000, runtimeSettings?.fetchTimeoutMs ?? DEFAULT_SETTINGS.fetchTimeoutMs);
+
+  try {
+    await loginSession.cookies.set({
+      url: CLAUDE_LOGIN_URL,
+      name: 'sessionKey',
+      value: sessionKey,
+      domain: 'claude.ai',
+      path: '/',
+      secure: true,
+      httpOnly: true
+    });
+
+    await hiddenWindow.loadURL(CLAUDE_LOGIN_URL);
+
+    const result = await Promise.race([
+      hiddenWindow.webContents.executeJavaScript(
+        `
+          fetch(${JSON.stringify(usageUrl)}, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json' }
+          }).then(async (response) => ({
+            status: response.status,
+            body: await response.text()
+          }))
+        `,
+        true
+      ),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Claude usage request timed out.')), timeoutMs);
+      })
+    ]);
+
+    const status = Number(result?.status || 0);
+    const body = String(result?.body || '');
+    let payload = null;
+    try {
+      payload = body ? JSON.parse(body) : null;
+    } catch {
+      payload = null;
+    }
+
+    const errorType = String(payload?.error?.type || payload?.type || '').toLowerCase();
+    const errorMessage = String(payload?.error?.message || payload?.message || '').toLowerCase();
+    const hasPermissionError = errorType === 'permission_error' || errorMessage.includes('permission_error');
+
+    if (status === 401 || status === 403 || hasPermissionError) {
+      const error = new Error('Claude session expired. Please log in again.');
+      error.code = 'SESSION_EXPIRED';
+      throw error;
+    }
+    if (status < 200 || status >= 300) {
+      throw new Error(`Claude usage request failed: ${status || 'unknown'}`);
+    }
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Claude usage response was invalid.');
+    }
+
+    return payload;
+  } finally {
+    if (!hiddenWindow.isDestroyed()) {
+      hiddenWindow.destroy();
+    }
+  }
+}
+
+async function fetchClaudeUsage() {
+  const credentials = loadClaudeCredentials();
+  const orgId = credentials?.organizationUuid;
+  if (!orgId) {
+    claudeLastGoodState = null;
+    return createEmptyClaudeState();
+  }
+
+  const sessionKey = loadClaudeSessionKey();
+  if (!sessionKey) {
+    return createEmptyClaudeState({ isConfigured: true, needsLogin: true });
+  }
+
+  const now = Date.now();
+  const cachedState = claudeLastGoodState;
+  if (cachedState && now - cachedState.fetchedAt < CLAUDE_CACHE_TTL_MS) {
+    return {
+      ...cachedState.state,
+      isConfigured: true,
+      isCached: true
+    };
+  }
+
+  try {
+    console.log('[Claude] Fetching usage...');
+    const payload = await fetchClaudeUsageWithCookie(sessionKey, orgId);
+    console.log('[Claude] Got payload:', JSON.stringify(payload).substring(0, 300));
+    const state = createEmptyClaudeState({
+      planType: 'CLAUDE',
+      primary: parseClaudeWindow(payload.five_hour),
+      secondary: parseClaudeWindow(payload.seven_day),
+      isConfigured: true,
+      isCached: false
+    });
+    claudeLastGoodState = {
+      fetchedAt: now,
+      state
+    };
+    return state;
+  } catch (error) {
+    console.error('[Claude] Fetch error:', error instanceof Error ? error.message : String(error));
+    if (error && error.code === 'SESSION_EXPIRED') {
+      clearClaudeSessionKey();
+      return createEmptyClaudeState({
+        isConfigured: true,
+        needsLogin: true,
+        error: 'Claude session expired. Please log in again.'
+      });
+    }
+    if (claudeLastGoodState) {
+      return {
+        ...claudeLastGoodState.state,
+        isConfigured: true,
+        isCached: true,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+    return createEmptyClaudeState({ isConfigured: true, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function sleep(ms) {
@@ -363,7 +663,6 @@ function loadSessionLabel() {
 }
 
 async function buildWidgetState() {
-  const usage = await fetchUsage();
   const displayMode = runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode;
   let sessionLabel = 'Recent session';
   try {
@@ -372,10 +671,33 @@ async function buildWidgetState() {
     // Session parsing failure should not block usage display.
     sessionLabel = 'Recent session';
   }
+  const [usageResult, claudeResult] = await Promise.allSettled([fetchUsage(), fetchClaudeUsage()]);
+  if (usageResult.status !== 'fulfilled' && claudeResult.status !== 'fulfilled') {
+    throw usageResult.reason || claudeResult.reason || new Error('Unable to refresh usage.');
+  }
+
+  const usage = usageResult.status === 'fulfilled'
+    ? usageResult.value
+    : {
+        planType: 'CODEX',
+        primary: { usedPercent: null, resetAfterSeconds: null },
+        secondary: { usedPercent: null, resetAfterSeconds: null },
+        error: usageResult.reason instanceof Error ? usageResult.reason.message : String(usageResult.reason)
+      };
+
+  const claude = claudeResult.status === 'fulfilled'
+    ? claudeResult.value
+    : createEmptyClaudeState({
+        isConfigured: true,
+        error: claudeResult.reason instanceof Error ? claudeResult.reason.message : String(claudeResult.reason)
+      });
+
   return {
     ...usage,
+    claude,
     sessionLabel,
-    displayMode
+    displayMode,
+    error: usage.error || null
   };
 }
 
@@ -384,14 +706,27 @@ function sendState(state) {
     mainWindow.webContents.send('widget-state', state);
   }
   if (tray) {
-    if (state.error) {
-      tray.setToolTip(`Codex Widget\n${state.error}`);
+    const displayMode = state.displayMode || runtimeSettings?.displayMode || DEFAULT_SETTINGS.displayMode;
+    const codexPrimaryPercent = computeDisplayPercent(state.primary?.usedPercent, displayMode);
+    const codexSecondaryPercent = computeDisplayPercent(state.secondary?.usedPercent, displayMode);
+    const claudePrimaryPercent = computeDisplayPercent(state.claude?.primary?.usedPercent, displayMode);
+    const claudeSecondaryPercent = computeDisplayPercent(state.claude?.secondary?.usedPercent, displayMode);
+    const lines = [
+      'Codex Widget',
+      state.error
+        ? `CODEX ${state.error}`
+        : `CODEX ${modeLabel(displayMode)} 5H ${codexPrimaryPercent}% | WEEK ${codexSecondaryPercent}%`
+    ];
+    if (state.claude?.isConfigured) {
+      lines.push(
+        state.claude.error && !state.claude.isCached
+          ? `CLAUDE ${state.claude.error}`
+          : `CLAUDE ${modeLabel(displayMode)} 5H ${Number.isFinite(claudePrimaryPercent) ? claudePrimaryPercent : '--'}% | WEEK ${Number.isFinite(claudeSecondaryPercent) ? claudeSecondaryPercent : '--'}%${state.claude.isCached ? ' (cached)' : ''}`
+      );
     } else {
-      const displayMode = state.displayMode || runtimeSettings?.displayMode || DEFAULT_SETTINGS.displayMode;
-      const primaryPercent = computeDisplayPercent(state.primary?.usedPercent, displayMode);
-      const secondaryPercent = computeDisplayPercent(state.secondary?.usedPercent, displayMode);
-      tray.setToolTip(`Codex Widget\n${modeLabel(displayMode)} 5H ${primaryPercent}% | WEEK ${secondaryPercent}%`);
+      lines.push('CLAUDE Not configured');
     }
+    tray.setToolTip(lines.join('\n'));
   }
 }
 
@@ -426,17 +761,21 @@ function notifyUsageThresholds(state) {
   if (!runtimeSettings?.enableUsageAlerts || !Array.isArray(runtimeSettings?.usageAlertThresholds)) {
     return;
   }
-  if (state.error) {
-    return;
+
+  if (!state.error) {
+    checkWindowThreshold(usageAlertState, 'primary', state.primary?.usedPercent, 'CODEX', '5-HOUR');
+    checkWindowThreshold(usageAlertState, 'secondary', state.secondary?.usedPercent, 'CODEX', 'WEEKLY');
   }
 
-  checkWindowThreshold('primary', state.primary?.usedPercent, '5-HOUR');
-  checkWindowThreshold('secondary', state.secondary?.usedPercent, 'WEEKLY');
+  if (state.claude?.isConfigured && !state.claude.error) {
+    checkWindowThreshold(claudeUsageAlertState, 'primary', state.claude.primary?.usedPercent, 'CLAUDE', '5-HOUR');
+    checkWindowThreshold(claudeUsageAlertState, 'secondary', state.claude.secondary?.usedPercent, 'CLAUDE', 'WEEKLY');
+  }
 }
 
-function checkWindowThreshold(key, value, windowLabel) {
+function checkWindowThreshold(alertState, key, value, providerLabel, windowLabel) {
   const currentValue = Number(value);
-  const windowState = usageAlertState[key];
+  const windowState = alertState[key];
   if (!Number.isFinite(currentValue)) {
     windowState.lastValue = null;
     windowState.notifiedThresholds.clear();
@@ -455,7 +794,7 @@ function checkWindowThreshold(key, value, windowLabel) {
     windowState.notifiedThresholds.add(threshold);
     if (Notification.isSupported()) {
       new Notification({
-        title: `Codex Usage Alert (${windowLabel})`,
+        title: `${providerLabel} Usage Alert (${windowLabel})`,
         body: `Usage reached ${threshold}% (${Math.round(currentValue)}%).`
       }).show();
     }
@@ -496,6 +835,7 @@ async function refreshState() {
       planType: 'CODEX',
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
+      claude: createEmptyClaudeState(),
       sessionLabel: 'Offline',
       displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
       error: errorMessage
@@ -582,6 +922,7 @@ ipcMain.handle('widget:get-initial-state', async () => {
       planType: 'CODEX',
       primary: { usedPercent: null, resetAfterSeconds: null },
       secondary: { usedPercent: null, resetAfterSeconds: null },
+      claude: createEmptyClaudeState(),
       sessionLabel: 'Offline',
       displayMode: runtimeSettings?.displayMode ?? DEFAULT_SETTINGS.displayMode,
       error: errorMessage
@@ -609,6 +950,28 @@ ipcMain.handle('widget:set-display-mode', async (_event, mode) => {
 });
 
 ipcMain.handle('widget:refresh-now', async () => {
+  await refreshState();
+  return true;
+});
+
+ipcMain.handle('widget:claude-login', async () => {
+  try {
+    const sessionKey = await openClaudeLoginWindow();
+    saveClaudeSessionKey(sessionKey);
+    claudeLastGoodState = null;
+    await refreshState();
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+ipcMain.handle('widget:claude-logout', async () => {
+  clearClaudeSessionKey();
+  claudeLastGoodState = null;
   await refreshState();
   return true;
 });

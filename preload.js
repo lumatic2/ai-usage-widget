@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('codexWidget', {
   updateSettings: (partial) => ipcRenderer.invoke('widget:update-settings', partial),
   setDisplayMode: (mode) => ipcRenderer.invoke('widget:set-display-mode', mode),
   refreshNow: () => ipcRenderer.invoke('widget:refresh-now'),
+  claudeLogin: () => ipcRenderer.invoke('widget:claude-login'),
+  claudeLogout: () => ipcRenderer.invoke('widget:claude-logout'),
   onState: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('widget-state', listener);

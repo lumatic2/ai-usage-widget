@@ -4,10 +4,25 @@ const primaryProgress = document.getElementById('primaryProgress');
 const secondaryProgress = document.getElementById('secondaryProgress');
 const primaryReset = document.getElementById('primaryReset');
 const secondaryReset = document.getElementById('secondaryReset');
+const claudeSection = document.getElementById('claudeSection');
+const claudePrimaryBar = document.getElementById('claudePrimaryBar');
+const claudeSecondaryBar = document.getElementById('claudeSecondaryBar');
+const claudePrimaryValue = document.getElementById('claudePrimaryValue');
+const claudeSecondaryValue = document.getElementById('claudeSecondaryValue');
+const claudePrimaryProgress = document.getElementById('claudePrimaryProgress');
+const claudeSecondaryProgress = document.getElementById('claudeSecondaryProgress');
+const claudePrimaryReset = document.getElementById('claudePrimaryReset');
+const claudeSecondaryReset = document.getElementById('claudeSecondaryReset');
+const claudeStatusPill = document.getElementById('claudeStatusPill');
+const claudeLoginWrap = document.getElementById('claudeLoginWrap');
+const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
 const errorBanner = document.getElementById('errorBanner');
 const errorText = document.getElementById('errorText');
 const errorCloseButton = document.getElementById('errorCloseButton');
+const claudeErrorBanner = document.getElementById('claudeErrorBanner');
+const claudeErrorText = document.getElementById('claudeErrorText');
+const claudeErrorCloseButton = document.getElementById('claudeErrorCloseButton');
 const settingsToggleButton = document.getElementById('settingsToggleButton');
 const settingsPanel = document.getElementById('settingsPanel');
 const displayModeSelect = document.getElementById('displayModeSelect');
@@ -17,23 +32,30 @@ const alertThresholdsInput = document.getElementById('alertThresholdsInput');
 const openOnStartupInput = document.getElementById('openOnStartupInput');
 const settingsSaveButton = document.getElementById('settingsSaveButton');
 const settingsRefreshButton = document.getElementById('settingsRefreshButton');
+const claudeLogoutButton = document.getElementById('claudeLogoutButton');
 let currentDisplayMode = 'used';
 let currentErrorKey = null;
 let dismissedErrorKey = null;
+let currentClaudeErrorKey = null;
+let dismissedClaudeErrorKey = null;
 let settingsPanelOpen = false;
+let claudeLoginErrorTimeout = null;
 
 function render(state) {
   const displayMode = normalizeDisplayMode(state.displayMode);
   currentDisplayMode = displayMode;
-  const primary = resolveDisplayPercent(state.primary?.usedPercent, displayMode);
-  const secondary = resolveDisplayPercent(state.secondary?.usedPercent, displayMode);
-
-  primaryValue.textContent = formatPercent(primary);
-  secondaryValue.textContent = formatPercent(secondary);
-  primaryProgress.style.width = `${clampPercentForBar(primary)}%`;
-  secondaryProgress.style.width = `${clampPercentForBar(secondary)}%`;
-  primaryReset.textContent = formatReset(state.primary?.resetAfterSeconds);
-  secondaryReset.textContent = formatReset(state.secondary?.resetAfterSeconds);
+  renderUsageSection(
+    {
+      primaryValue,
+      secondaryValue,
+      primaryProgress,
+      secondaryProgress,
+      primaryReset,
+      secondaryReset
+    },
+    state,
+    displayMode
+  );
 
   const hasError = Boolean(state.error);
   currentErrorKey = hasError ? String(state.error).trim() : null;
@@ -43,6 +65,84 @@ function render(state) {
     errorText.textContent = currentErrorKey;
   } else {
     dismissedErrorKey = null;
+  }
+
+  renderClaudeSection(state.claude, displayMode);
+}
+
+function renderUsageSection(elements, state, displayMode) {
+  const primary = resolveDisplayPercent(state.primary?.usedPercent, displayMode);
+  const secondary = resolveDisplayPercent(state.secondary?.usedPercent, displayMode);
+
+  elements.primaryValue.textContent = formatPercent(primary);
+  elements.secondaryValue.textContent = formatPercent(secondary);
+  elements.primaryProgress.style.width = `${clampPercentForBar(primary)}%`;
+  elements.secondaryProgress.style.width = `${clampPercentForBar(secondary)}%`;
+  elements.primaryReset.textContent = formatReset(state.primary?.resetAfterSeconds);
+  elements.secondaryReset.textContent = formatReset(state.secondary?.resetAfterSeconds);
+}
+
+function renderClaudeSection(claudeState, displayMode) {
+  const state = claudeState || {};
+  const isConfigured = Boolean(state.isConfigured);
+  const needsLogin = Boolean(state.needsLogin);
+  const disableBars = !isConfigured || needsLogin;
+  claudeSection.classList.toggle('stack--disabled', disableBars);
+  claudePrimaryBar.classList.toggle('pixel-bar--disabled', disableBars);
+  claudeSecondaryBar.classList.toggle('pixel-bar--disabled', disableBars);
+  claudeLoginWrap.hidden = !needsLogin;
+
+  if (!isConfigured) {
+    claudePrimaryValue.textContent = 'OFF';
+    claudeSecondaryValue.textContent = '--';
+    claudePrimaryProgress.style.width = '0%';
+    claudeSecondaryProgress.style.width = '0%';
+    claudePrimaryReset.textContent = 'not configured';
+    claudeSecondaryReset.textContent = 'add ~/.claude';
+    claudeStatusPill.hidden = true;
+    claudeErrorBanner.hidden = true;
+    dismissedClaudeErrorKey = null;
+    currentClaudeErrorKey = null;
+    return;
+  }
+
+  if (needsLogin) {
+    claudePrimaryValue.textContent = '--%';
+    claudeSecondaryValue.textContent = '--%';
+    claudePrimaryProgress.style.width = '0%';
+    claudeSecondaryProgress.style.width = '0%';
+    claudePrimaryReset.textContent = 'login required';
+    claudeSecondaryReset.textContent = 'claude.ai session';
+    claudeStatusPill.hidden = true;
+    claudeErrorBanner.hidden = true;
+    dismissedClaudeErrorKey = null;
+    currentClaudeErrorKey = null;
+    return;
+  }
+
+  renderUsageSection(
+    {
+      primaryValue: claudePrimaryValue,
+      secondaryValue: claudeSecondaryValue,
+      primaryProgress: claudePrimaryProgress,
+      secondaryProgress: claudeSecondaryProgress,
+      primaryReset: claudePrimaryReset,
+      secondaryReset: claudeSecondaryReset
+    },
+    state,
+    displayMode
+  );
+
+  claudeStatusPill.hidden = true;
+
+  const hasClaudeError = Boolean(state.error) && !state.isCached;
+  currentClaudeErrorKey = hasClaudeError ? String(state.error).trim() : null;
+  const shouldShowClaudeError = hasClaudeError && currentClaudeErrorKey !== dismissedClaudeErrorKey;
+  claudeErrorBanner.hidden = !shouldShowClaudeError;
+  if (hasClaudeError) {
+    claudeErrorText.textContent = currentClaudeErrorKey;
+  } else {
+    dismissedClaudeErrorKey = null;
   }
 }
 
@@ -121,6 +221,14 @@ errorCloseButton.addEventListener('click', () => {
   window.codexWidget.refreshNow();
 });
 
+claudeErrorCloseButton.addEventListener('click', () => {
+  if (currentClaudeErrorKey) {
+    dismissedClaudeErrorKey = currentClaudeErrorKey;
+  }
+  claudeErrorBanner.hidden = true;
+  window.codexWidget.refreshNow();
+});
+
 settingsToggleButton.addEventListener('click', () => {
   settingsPanelOpen = !settingsPanelOpen;
   settingsPanel.hidden = !settingsPanelOpen;
@@ -152,4 +260,35 @@ settingsSaveButton.addEventListener('click', async () => {
 
 settingsRefreshButton.addEventListener('click', () => {
   window.codexWidget.refreshNow();
+});
+
+claudeLoginBtn.addEventListener('click', async () => {
+  claudeLoginBtn.disabled = true;
+  claudeLoginBtn.textContent = 'OPENING...';
+  try {
+    const result = await window.codexWidget.claudeLogin();
+    if (!result?.success) {
+      currentClaudeErrorKey = String(result?.error || 'Claude login failed.');
+      claudeErrorText.textContent = currentClaudeErrorKey;
+      claudeErrorBanner.hidden = false;
+      if (claudeLoginErrorTimeout) {
+        clearTimeout(claudeLoginErrorTimeout);
+      }
+      claudeLoginErrorTimeout = setTimeout(() => {
+        claudeErrorBanner.hidden = true;
+      }, 4000);
+    }
+  } finally {
+    claudeLoginBtn.disabled = false;
+    claudeLoginBtn.textContent = 'LOGIN';
+  }
+});
+
+claudeLogoutButton.addEventListener('click', async () => {
+  claudeLogoutButton.disabled = true;
+  try {
+    await window.codexWidget.claudeLogout();
+  } finally {
+    claudeLogoutButton.disabled = false;
+  }
 });

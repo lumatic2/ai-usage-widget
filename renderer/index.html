@@ -11,37 +11,80 @@
       <section class="card drag">
         <button class="hide no-drag" id="hideButton" aria-label="Hide widget">×</button>
         <button class="settings-toggle no-drag" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
-        <div class="title-row">
-          <span class="title-text">CODEX</span>
-        </div>
-        <div class="stack">
-          <div class="pixel-card-wrap">
-            <div class="pixel-bar pixel-bar--gold">
-              <div class="bar-left">
-                <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
-                <span class="bar-label">5-HOUR</span>
-              </div>
-              <span class="bar-value" id="primaryValue">--%</span>
-              <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--gold" id="primaryProgress"></span></div>
+        <div class="two-col">
+          <div class="col col--claude">
+            <div class="title-row title-row--claude">
+              <span class="title-text title-text--claude">CLAUDE</span>
+              <span id="claudeStatusPill" hidden></span>
             </div>
-            <div class="reset-tag" id="primaryResetTag"><span class="reset-tag-text" id="primaryReset">reset --</span></div>
-          </div>
-          <div class="pixel-card-wrap">
-            <div class="pixel-bar pixel-bar--green">
-              <div class="bar-left">
-                <img class="bar-icon" src="./icon-week.svg" alt="" draggable="false" />
-                <span class="bar-label">WEEKLY</span>
+            <div class="stack stack--claude" id="claudeSection">
+              <div class="pixel-card-wrap">
+                <div class="pixel-bar pixel-bar--purple" id="claudePrimaryBar">
+                  <div class="bar-left">
+                    <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
+                    <span class="bar-label">5-HOUR</span>
+                  </div>
+                  <span class="bar-value" id="claudePrimaryValue">--%</span>
+                  <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--purple" id="claudePrimaryProgress"></span></div>
+                </div>
+                <div class="reset-tag" id="claudePrimaryResetTag"><span class="reset-tag-text" id="claudePrimaryReset">reset --</span></div>
               </div>
-              <span class="bar-value" id="secondaryValue">--%</span>
-              <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--green" id="secondaryProgress"></span></div>
+              <div class="pixel-card-wrap">
+                <div class="pixel-bar pixel-bar--teal" id="claudeSecondaryBar">
+                  <div class="bar-left">
+                    <img class="bar-icon" src="./icon-week.svg" alt="" draggable="false" />
+                    <span class="bar-label">WEEKLY</span>
+                  </div>
+                  <span class="bar-value" id="claudeSecondaryValue">--%</span>
+                  <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--teal" id="claudeSecondaryProgress"></span></div>
+                </div>
+                <div class="reset-tag" id="claudeSecondaryResetTag"><span class="reset-tag-text" id="claudeSecondaryReset">reset --</span></div>
+              </div>
             </div>
-            <div class="reset-tag" id="secondaryResetTag"><span class="reset-tag-text" id="secondaryReset">reset --</span></div>
+            <div class="claude-login-wrap" id="claudeLoginWrap" hidden>
+              <button class="claude-login-btn no-drag" id="claudeLoginBtn" type="button">LOGIN</button>
+              <span class="claude-login-hint">Login to claude.ai to show usage</span>
+            </div>
+            <div class="error-banner error-banner--claude" id="claudeErrorBanner" hidden>
+              <span class="error-label">CLAUDE</span>
+              <span class="error-text" id="claudeErrorText">Claude usage unavailable.</span>
+              <button class="error-close no-drag" id="claudeErrorCloseButton" type="button" aria-label="Dismiss Claude error">x</button>
+            </div>
           </div>
-        </div>
-        <div class="error-banner" id="errorBanner" hidden>
-          <span class="error-label">ERROR</span>
-          <span class="error-text" id="errorText">Unable to refresh usage.</span>
-          <button class="error-close no-drag" id="errorCloseButton" type="button" aria-label="Dismiss error">x</button>
+          <div class="col col--codex">
+            <div class="title-row">
+              <span class="title-text">CODEX</span>
+            </div>
+            <div class="stack">
+              <div class="pixel-card-wrap">
+                <div class="pixel-bar pixel-bar--gold">
+                  <div class="bar-left">
+                    <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
+                    <span class="bar-label">5-HOUR</span>
+                  </div>
+                  <span class="bar-value" id="primaryValue">--%</span>
+                  <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--gold" id="primaryProgress"></span></div>
+                </div>
+                <div class="reset-tag" id="primaryResetTag"><span class="reset-tag-text" id="primaryReset">reset --</span></div>
+              </div>
+              <div class="pixel-card-wrap">
+                <div class="pixel-bar pixel-bar--green">
+                  <div class="bar-left">
+                    <img class="bar-icon" src="./icon-week.svg" alt="" draggable="false" />
+                    <span class="bar-label">WEEKLY</span>
+                  </div>
+                  <span class="bar-value" id="secondaryValue">--%</span>
+                  <div class="bar-progress"><span class="bar-progress-fill bar-progress-fill--green" id="secondaryProgress"></span></div>
+                </div>
+                <div class="reset-tag" id="secondaryResetTag"><span class="reset-tag-text" id="secondaryReset">reset --</span></div>
+              </div>
+            </div>
+            <div class="error-banner" id="errorBanner" hidden>
+              <span class="error-label">ERROR</span>
+              <span class="error-text" id="errorText">Unable to refresh usage.</span>
+              <button class="error-close no-drag" id="errorCloseButton" type="button" aria-label="Dismiss error">x</button>
+            </div>
+          </div>
         </div>
         <section class="settings-panel no-drag" id="settingsPanel" hidden>
           <div class="settings-row">
@@ -70,6 +113,9 @@
           <div class="settings-actions">
             <button class="settings-btn" id="settingsSaveButton" type="button">Save</button>
             <button class="settings-btn" id="settingsRefreshButton" type="button">Refresh</button>
+          </div>
+          <div class="settings-actions settings-actions--secondary">
+            <button class="settings-btn settings-btn--link" id="claudeLogoutButton" type="button">Claude Logout</button>
           </div>
           <div class="settings-note">Auto-start applies to packaged app.</div>
         </section>
