@@ -17,6 +17,8 @@ const claudeStatusPill = document.getElementById('claudeStatusPill');
 const claudeLoginWrap = document.getElementById('claudeLoginWrap');
 const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
+const hideButtonAlt = document.getElementById('hideButtonAlt');
+const claudeActions = document.getElementById('claudeActions');
 const errorBanner = document.getElementById('errorBanner');
 const errorText = document.getElementById('errorText');
 const errorCloseButton = document.getElementById('errorCloseButton');
@@ -24,12 +26,18 @@ const claudeErrorBanner = document.getElementById('claudeErrorBanner');
 const claudeErrorText = document.getElementById('claudeErrorText');
 const claudeErrorCloseButton = document.getElementById('claudeErrorCloseButton');
 const settingsToggleButton = document.getElementById('settingsToggleButton');
+const settingsToggleButtonAlt = document.getElementById('settingsToggleButtonAlt');
 const settingsPanel = document.getElementById('settingsPanel');
+const twoCol = document.querySelector('.two-col');
+const claudeColumn = document.querySelector('.col--claude');
+const codexColumn = document.querySelector('.col--codex');
 const displayModeSelect = document.getElementById('displayModeSelect');
 const refreshSecondsInput = document.getElementById('refreshSecondsInput');
 const alertsEnabledInput = document.getElementById('alertsEnabledInput');
 const alertThresholdsInput = document.getElementById('alertThresholdsInput');
 const openOnStartupInput = document.getElementById('openOnStartupInput');
+const showClaudeInput = document.getElementById('showClaudeInput');
+const showCodexInput = document.getElementById('showCodexInput');
 const settingsSaveButton = document.getElementById('settingsSaveButton');
 const settingsRefreshButton = document.getElementById('settingsRefreshButton');
 const claudeLogoutButton = document.getElementById('claudeLogoutButton');
@@ -40,6 +48,37 @@ let currentClaudeErrorKey = null;
 let dismissedClaudeErrorKey = null;
 let settingsPanelOpen = false;
 let claudeLoginErrorTimeout = null;
+
+function normalizePanelVisibility(value, fallback = true) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function applyPanelVisibility(showClaude, showCodex) {
+  const nextShowClaude = normalizePanelVisibility(showClaude, true);
+  const nextShowCodex = normalizePanelVisibility(showCodex, true);
+  claudeColumn.classList.toggle('col--hidden', !nextShowClaude);
+  codexColumn.classList.toggle('col--hidden', !nextShowCodex);
+  // 버튼: Codex가 보이면 Codex 행, 숨겨지면 Claude 행으로
+  claudeActions.hidden = nextShowCodex;
+}
+
+function enforcePanelToggleRule(changedInput) {
+  if (!showClaudeInput.checked && !showCodexInput.checked) {
+    changedInput.checked = true;
+  }
+}
+
+function syncSettingsInputs(settings) {
+  displayModeSelect.value = normalizeDisplayMode(settings.displayMode);
+  refreshSecondsInput.value = Math.max(10, Math.round((settings.refreshIntervalMs || 60000) / 1000));
+  alertsEnabledInput.checked = Boolean(settings.enableUsageAlerts);
+  alertThresholdsInput.value = Array.isArray(settings.usageAlertThresholds) ? settings.usageAlertThresholds.join(',') : '30,60,80,90';
+  openOnStartupInput.checked = Boolean(settings.openOnStartup);
+  showClaudeInput.checked = normalizePanelVisibility(settings.showClaude, true);
+  showCodexInput.checked = normalizePanelVisibility(settings.showCodex, true);
+  enforcePanelToggleRule(showClaudeInput.checked ? showCodexInput : showClaudeInput);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+}
 
 function render(state) {
   const displayMode = normalizeDisplayMode(state.displayMode);
@@ -201,15 +240,13 @@ function clampPercentForBar(value) {
 
 window.codexWidget.getInitialState().then(render);
 window.codexWidget.onState(render);
-window.codexWidget.getSettings().then((settings) => {
-  displayModeSelect.value = normalizeDisplayMode(settings.displayMode);
-  refreshSecondsInput.value = Math.max(10, Math.round((settings.refreshIntervalMs || 60000) / 1000));
-  alertsEnabledInput.checked = Boolean(settings.enableUsageAlerts);
-  alertThresholdsInput.value = Array.isArray(settings.usageAlertThresholds) ? settings.usageAlertThresholds.join(',') : '30,60,80,90';
-  openOnStartupInput.checked = Boolean(settings.openOnStartup);
-});
+window.codexWidget.getSettings().then(syncSettingsInputs);
 
 hideButton.addEventListener('click', () => {
+  window.codexWidget.hide();
+});
+
+hideButtonAlt.addEventListener('click', () => {
   window.codexWidget.hide();
 });
 
@@ -234,23 +271,37 @@ settingsToggleButton.addEventListener('click', () => {
   settingsPanel.hidden = !settingsPanelOpen;
 });
 
+settingsToggleButtonAlt.addEventListener('click', () => {
+  settingsPanelOpen = !settingsPanelOpen;
+  settingsPanel.hidden = !settingsPanelOpen;
+});
+
+showClaudeInput.addEventListener('change', () => {
+  enforcePanelToggleRule(showClaudeInput);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+});
+
+showCodexInput.addEventListener('change', () => {
+  enforcePanelToggleRule(showCodexInput);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+});
+
 settingsSaveButton.addEventListener('click', async () => {
+  enforcePanelToggleRule(showClaudeInput.checked ? showCodexInput : showClaudeInput);
   const payload = {
     displayMode: normalizeDisplayMode(displayModeSelect.value),
     refreshIntervalMs: Math.max(10, Number(refreshSecondsInput.value || 60)) * 1000,
     enableUsageAlerts: Boolean(alertsEnabledInput.checked),
     usageAlertThresholds: parseThresholds(alertThresholdsInput.value),
-    openOnStartup: Boolean(openOnStartupInput.checked)
+    openOnStartup: Boolean(openOnStartupInput.checked),
+    showClaude: Boolean(showClaudeInput.checked),
+    showCodex: Boolean(showCodexInput.checked)
   };
 
   settingsSaveButton.disabled = true;
   try {
     const next = await window.codexWidget.updateSettings(payload);
-    displayModeSelect.value = normalizeDisplayMode(next.displayMode);
-    refreshSecondsInput.value = Math.round((next.refreshIntervalMs || 60000) / 1000);
-    alertsEnabledInput.checked = Boolean(next.enableUsageAlerts);
-    alertThresholdsInput.value = Array.isArray(next.usageAlertThresholds) ? next.usageAlertThresholds.join(',') : '';
-    openOnStartupInput.checked = Boolean(next.openOnStartup);
+    syncSettingsInputs(next);
     settingsPanel.hidden = true;
     settingsPanelOpen = false;
   } finally {

@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS = {
   y: 40,
   alwaysOnTop: true,
   openOnStartup: true,
+  showClaude: true,
+  showCodex: true,
   refreshIntervalMs: 60000,
   displayMode: 'used',
   usageAlertThresholds: [30, 60, 80, 90],
@@ -107,6 +109,11 @@ function sanitizeSettings(raw) {
   merged.enableUsageAlerts = Boolean(merged.enableUsageAlerts);
   merged.openOnStartup = Boolean(merged.openOnStartup);
   merged.alwaysOnTop = Boolean(merged.alwaysOnTop);
+  merged.showClaude = Boolean(merged.showClaude);
+  merged.showCodex = Boolean(merged.showCodex);
+  if (!merged.showClaude && !merged.showCodex) {
+    merged.showClaude = true;
+  }
   return merged;
 }
 
@@ -121,6 +128,8 @@ function clampInt(value, min, max, fallback) {
 function getPublicSettings(settings) {
   return {
     displayMode: settings.displayMode,
+    showClaude: settings.showClaude,
+    showCodex: settings.showCodex,
     enableUsageAlerts: settings.enableUsageAlerts,
     usageAlertThresholds: settings.usageAlertThresholds,
     refreshIntervalMs: settings.refreshIntervalMs,

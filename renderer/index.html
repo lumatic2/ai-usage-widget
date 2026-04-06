@@ -9,13 +9,15 @@
   <body>
     <main class="widget">
       <section class="card drag">
-        <button class="hide no-drag" id="hideButton" aria-label="Hide widget">×</button>
-        <button class="settings-toggle no-drag" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
-        <div class="two-col">
+        <div class="two-col two-col--dual">
           <div class="col col--claude">
             <div class="title-row title-row--claude">
               <span class="title-text title-text--claude">CLAUDE</span>
               <span id="claudeStatusPill" hidden></span>
+              <div class="title-row-actions no-drag" id="claudeActions" hidden>
+                <button class="settings-toggle" id="settingsToggleButtonAlt" type="button" aria-label="Open settings">⚙</button>
+                <button class="hide" id="hideButtonAlt" aria-label="Hide widget">×</button>
+              </div>
             </div>
             <div class="stack stack--claude" id="claudeSection">
               <div class="pixel-card-wrap">
@@ -52,8 +54,12 @@
             </div>
           </div>
           <div class="col col--codex">
-            <div class="title-row">
+            <div class="title-row title-row--codex">
               <span class="title-text">CODEX</span>
+              <div class="title-row-actions no-drag">
+                <button class="settings-toggle" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
+                <button class="hide" id="hideButton" aria-label="Hide widget">×</button>
+              </div>
             </div>
             <div class="stack">
               <div class="pixel-card-wrap">
@@ -109,6 +115,14 @@
           <div class="settings-row settings-row--check">
             <label class="settings-label settings-label--check" for="openOnStartupInput">Open at login</label>
             <input id="openOnStartupInput" type="checkbox" />
+          </div>
+          <div class="settings-row settings-row--check">
+            <label class="settings-label settings-label--check" for="showClaudeInput">Show Claude</label>
+            <input id="showClaudeInput" type="checkbox" />
+          </div>
+          <div class="settings-row settings-row--check">
+            <label class="settings-label settings-label--check" for="showCodexInput">Show Codex</label>
+            <input id="showCodexInput" type="checkbox" />
           </div>
           <div class="settings-actions">
             <button class="settings-btn" id="settingsSaveButton" type="button">Save</button>
