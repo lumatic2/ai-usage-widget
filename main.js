@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, Notification, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const {
   computeDisplayPercent,
   didUsageWindowReset,
@@ -220,12 +221,80 @@ function loadClaudeCredentials() {
   const payload = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
   const oauth = payload.claudeAiOauth || {};
   const accessToken = String(oauth.accessToken || '').trim();
-  const organizationUuid = String(payload.organizationUuid || '').trim();
-  if (!organizationUuid) {
-    throw new Error('Claude credentials are incomplete.');
+  if (!accessToken) {
+    return null;
   }
+  const organizationUuid = String(payload.organizationUuid || '').trim() || null;
 
   return { accessToken, organizationUuid };
+}
+
+function nodeHttpsGet(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { headers }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function fetchOrgUuidWithToken(accessToken) {
+  try {
+    const cached = runtimeSettings?.cachedOrgUuid || null;
+    if (cached) return cached;
+
+    const { status, body } = await nodeHttpsGet('https://claude.ai/api/organizations', {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'User-Agent': CLAUDE_CHROME_USER_AGENT
+    });
+    if (status < 200 || status >= 300) return null;
+    const data = JSON.parse(body);
+    const orgId = Array.isArray(data)
+      ? String(data[0]?.uuid || '').trim()
+      : String(data?.uuid || '').trim();
+    if (!orgId) return null;
+
+    const settings = runtimeSettings || loadSettings();
+    const next = sanitizeSettings({ ...settings, cachedOrgUuid: orgId });
+    runtimeSettings = next;
+    saveSettings(next);
+    return orgId;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchClaudeUsageWithToken(accessToken, orgId) {
+  const usageUrl = `https://claude.ai/api/organizations/${encodeURIComponent(orgId)}/usage`;
+  const timeoutMs = Math.max(15000, runtimeSettings?.fetchTimeoutMs ?? DEFAULT_SETTINGS.fetchTimeoutMs);
+  const { status, body } = await Promise.race([
+    nodeHttpsGet(usageUrl, {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'User-Agent': CLAUDE_CHROME_USER_AGENT
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Claude usage request timed out.')), timeoutMs))
+  ]);
+  let payload = null;
+  try { payload = body ? JSON.parse(body) : null; } catch { payload = null; }
+  const errorType = String(payload?.error?.type || payload?.type || '').toLowerCase();
+  const hasPermissionError = errorType === 'permission_error';
+  if (status === 401 || status === 403 || hasPermissionError) {
+    const error = new Error('Claude session expired. Please log in again.');
+    error.code = 'SESSION_EXPIRED';
+    throw error;
+  }
+  if (status < 200 || status >= 300) {
+    throw new Error(`Claude usage request failed: ${status || 'unknown'}`);
+  }
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Claude usage response was invalid.');
+  }
+  return payload;
 }
 
 function loadClaudeSessionKey() {
@@ -326,6 +395,24 @@ async function openClaudeLoginWindow() {
         const sessionKey = String(cookies[0]?.value || '').trim();
         if (sessionKey) {
           saveClaudeSessionKey(sessionKey);
+          // Also try to capture org UUID from the page context.
+          try {
+            const orgResult = await loginWindow.webContents.executeJavaScript(
+              `fetch('https://claude.ai/api/organizations', { credentials: 'include', headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null)`,
+              true
+            );
+            const orgId = Array.isArray(orgResult)
+              ? String(orgResult[0]?.uuid || '').trim()
+              : String(orgResult?.uuid || '').trim();
+            if (orgId) {
+              const settings = runtimeSettings || loadSettings();
+              const next = sanitizeSettings({ ...settings, cachedOrgUuid: orgId });
+              runtimeSettings = next;
+              saveSettings(next);
+            }
+          } catch {
+            // Non-fatal: org UUID capture failed, will retry on next usage fetch.
+          }
           finish(resolve, sessionKey);
         }
       } catch {
@@ -429,30 +516,32 @@ async function fetchClaudeUsageWithCookie(sessionKey, organizationUuid) {
 
 async function fetchClaudeUsage() {
   const credentials = loadClaudeCredentials();
-  const orgId = credentials?.organizationUuid;
-  if (!orgId) {
+  if (!credentials) {
     claudeLastGoodState = null;
     return createEmptyClaudeState();
   }
 
-  const sessionKey = loadClaudeSessionKey();
-  if (!sessionKey) {
+  const { accessToken } = credentials;
+  let orgId = credentials.organizationUuid;
+
+  // If orgId is missing from credentials, check settings cache then try Bearer fetch.
+  if (!orgId) {
+    orgId = await fetchOrgUuidWithToken(accessToken);
+  }
+  if (!orgId) {
+    // Credentials exist but org UUID unavailable — prompt web login to resolve.
     return createEmptyClaudeState({ isConfigured: true, needsLogin: true });
   }
 
   const now = Date.now();
   const cachedState = claudeLastGoodState;
   if (cachedState && now - cachedState.fetchedAt < CLAUDE_CACHE_TTL_MS) {
-    return {
-      ...cachedState.state,
-      isConfigured: true,
-      isCached: true
-    };
+    return { ...cachedState.state, isConfigured: true, isCached: true };
   }
 
   try {
-    console.log('[Claude] Fetching usage...');
-    const payload = await fetchClaudeUsageWithCookie(sessionKey, orgId);
+    console.log('[Claude] Fetching usage (bearer)...');
+    const payload = await fetchClaudeUsageWithToken(accessToken, orgId);
     console.log('[Claude] Got payload:', JSON.stringify(payload).substring(0, 300));
     const state = createEmptyClaudeState({
       planType: 'CLAUDE',
@@ -461,30 +550,44 @@ async function fetchClaudeUsage() {
       isConfigured: true,
       isCached: false
     });
-    claudeLastGoodState = {
-      fetchedAt: now,
-      state
-    };
+    claudeLastGoodState = { fetchedAt: now, state };
     return state;
-  } catch (error) {
-    console.error('[Claude] Fetch error:', error instanceof Error ? error.message : String(error));
-    if (error && error.code === 'SESSION_EXPIRED') {
-      clearClaudeSessionKey();
-      return createEmptyClaudeState({
+  } catch (bearerError) {
+    console.warn('[Claude] Bearer fetch failed, trying cookie fallback:', bearerError.message);
+
+    // Fall back to cookie-based approach.
+    const sessionKey = loadClaudeSessionKey();
+    if (!sessionKey) {
+      if (bearerError.code === 'SESSION_EXPIRED') {
+        return createEmptyClaudeState({ isConfigured: true, needsLogin: true });
+      }
+      return createEmptyClaudeState({ isConfigured: true, needsLogin: true });
+    }
+
+    try {
+      console.log('[Claude] Fetching usage (cookie)...');
+      const payload = await fetchClaudeUsageWithCookie(sessionKey, orgId);
+      console.log('[Claude] Got payload:', JSON.stringify(payload).substring(0, 300));
+      const state = createEmptyClaudeState({
+        planType: 'CLAUDE',
+        primary: parseClaudeWindow(payload.five_hour),
+        secondary: parseClaudeWindow(payload.seven_day),
         isConfigured: true,
-        needsLogin: true,
-        error: 'Claude session expired. Please log in again.'
+        isCached: false
       });
+      claudeLastGoodState = { fetchedAt: now, state };
+      return state;
+    } catch (cookieError) {
+      console.error('[Claude] Cookie fetch error:', cookieError instanceof Error ? cookieError.message : String(cookieError));
+      if (cookieError.code === 'SESSION_EXPIRED') {
+        clearClaudeSessionKey();
+        return createEmptyClaudeState({ isConfigured: true, needsLogin: true, error: 'Claude session expired. Please log in again.' });
+      }
+      if (claudeLastGoodState) {
+        return { ...claudeLastGoodState.state, isConfigured: true, isCached: true, error: cookieError instanceof Error ? cookieError.message : String(cookieError) };
+      }
+      return createEmptyClaudeState({ isConfigured: true, error: cookieError instanceof Error ? cookieError.message : String(cookieError) });
     }
-    if (claudeLastGoodState) {
-      return {
-        ...claudeLastGoodState.state,
-        isConfigured: true,
-        isCached: true,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
-    return createEmptyClaudeState({ isConfigured: true, error: error instanceof Error ? error.message : String(error) });
   }
 }
 
