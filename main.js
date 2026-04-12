@@ -335,10 +335,12 @@ function normalizeClaudeUtilization(value) {
   if (!Number.isFinite(numeric)) {
     return null;
   }
-  if (numeric >= 0 && numeric <= 1) {
-    return Math.round(numeric * 100);
-  }
-  return Math.max(0, Math.min(Math.round(numeric), 100));
+  // The Claude API may return utilization as either:
+  //   - a decimal fraction (0.0–1.0), or
+  //   - a percentage (0–100).
+  // Values > 1 are treated as already a percentage.
+  const pct = numeric > 1 ? numeric : numeric * 100;
+  return Math.max(0, Math.min(Math.round(pct), 100));
 }
 
 function parseClaudeWindow(windowPayload) {
@@ -346,7 +348,12 @@ function parseClaudeWindow(windowPayload) {
     return { usedPercent: null, resetAfterSeconds: null };
   }
 
-  const usedPercent = normalizeClaudeUtilization(windowPayload.utilization);
+  const rawUtilization = windowPayload.utilization;
+  console.log('[Claude] raw utilization =', rawUtilization, '| type =', typeof rawUtilization);
+  const usedPercent = normalizeClaudeUtilization(rawUtilization);
+  if (usedPercent === 100) {
+    console.warn('[Claude] 100% utilization: raw value =', rawUtilization, '| resets_at =', windowPayload.resets_at);
+  }
   const resetTimestamp = Date.parse(windowPayload.resets_at || '');
   const resetAfterSeconds = Number.isFinite(resetTimestamp)
     ? Math.max(0, Math.round((resetTimestamp - Date.now()) / 1000))
@@ -531,6 +538,17 @@ async function fetchClaudeUsage() {
   if (!orgId) {
     // Credentials exist but org UUID unavailable — prompt web login to resolve.
     return createEmptyClaudeState({ isConfigured: true, needsLogin: true });
+  }
+
+  // Invalidate the cache early if the 5-hour window has already reset since
+  // the state was fetched — prevents stale 100% readings after a window rollover.
+  if (claudeLastGoodState) {
+    const elapsedSec = (Date.now() - claudeLastGoodState.fetchedAt) / 1000;
+    const primaryResetAfter = claudeLastGoodState.state?.primary?.resetAfterSeconds;
+    if (typeof primaryResetAfter === 'number' && primaryResetAfter >= 0 && elapsedSec >= primaryResetAfter) {
+      console.log('[Claude] Cache invalidated: 5-hour window has reset.');
+      claudeLastGoodState = null;
+    }
   }
 
   const now = Date.now();
