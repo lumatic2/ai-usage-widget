@@ -335,12 +335,11 @@ function normalizeClaudeUtilization(value) {
   if (!Number.isFinite(numeric)) {
     return null;
   }
-  // The Claude API may return utilization as either:
-  //   - a decimal fraction (0.0–1.0), or
-  //   - a percentage (0–100).
-  // Values > 1 are treated as already a percentage.
-  const pct = numeric > 1 ? numeric : numeric * 100;
-  return Math.max(0, Math.min(Math.round(pct), 100));
+  // Claude usage API returns utilization on a 0–100 percentage scale
+  // (e.g. five_hour.utilization = 8.0 for 8%). An earlier heuristic
+  // multiplied values ≤ 1 by 100, which incorrectly flipped real
+  // low-percentage readings (e.g. 1.0% → 100%).
+  return Math.max(0, Math.min(Math.round(numeric), 100));
 }
 
 function parseClaudeWindow(windowPayload) {
@@ -348,12 +347,7 @@ function parseClaudeWindow(windowPayload) {
     return { usedPercent: null, resetAfterSeconds: null };
   }
 
-  const rawUtilization = windowPayload.utilization;
-  console.log('[Claude] raw utilization =', rawUtilization, '| type =', typeof rawUtilization);
-  const usedPercent = normalizeClaudeUtilization(rawUtilization);
-  if (usedPercent === 100) {
-    console.warn('[Claude] 100% utilization: raw value =', rawUtilization, '| resets_at =', windowPayload.resets_at);
-  }
+  const usedPercent = normalizeClaudeUtilization(windowPayload.utilization);
   const resetTimestamp = Date.parse(windowPayload.resets_at || '');
   const resetAfterSeconds = Number.isFinite(resetTimestamp)
     ? Math.max(0, Math.round((resetTimestamp - Date.now()) / 1000))
