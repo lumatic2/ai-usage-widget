@@ -1003,6 +1003,7 @@ function createWindow() {
     y: bounds.y,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     resizable: false,
     hasShadow: false,
     skipTaskbar: true,
