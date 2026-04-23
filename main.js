@@ -1017,8 +1017,12 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true
+      contextIsolation: true
+      // sandbox intentionally left default (false):
+      // Windows + transparent:true + sandbox:true causes the GPU
+      // compositor to skip drawing the window contents. Widget still
+      // relies on preload + contextBridge + nodeIntegration:false for
+      // renderer isolation, which is the primary protection here.
     }
   });
 
