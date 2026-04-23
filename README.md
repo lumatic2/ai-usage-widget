@@ -1,36 +1,39 @@
-# Codex Pixel Widget
+# AI Usage Widget
 
-Minimal Windows desktop widget for OpenAI Codex usage.
+Minimal Windows desktop widget for monitoring **Claude** and **Codex** usage side by side.
 
-It runs as a small transparent Electron window, stays on top, can be dragged anywhere, and shows:
+Runs as a small transparent Electron window — stays on top, draggable, always visible.
 
-- `CODEX`
+Shows for each AI tool:
+
 - `5-HOUR` usage
 - `WEEKLY` usage
-- reset tags for both limits
+- Reset timers for both limits
 
-![Codex Pixel Widget Preview](./assets/widget-screenshot.png)
+![AI Usage Widget Preview](./assets/widget-screenshot.png)
 
 ## Features
 
 - Pixel-style floating widget
+- Side-by-side **Claude** + **Codex** panels
+- Toggle each panel on/off from settings
 - Frameless transparent window
 - Draggable and always-on-top
 - System tray integration
-- Auto-refresh from local Codex auth/session files
-- Portable Windows build support
+- Auto-refresh from local auth/session files
 
 ## Requirements
 
 - Windows
 - Node.js 24+
-- An active Codex login in `~/.codex/auth.json`
+- Codex panel: active Codex login in `~/.codex/auth.json`
+- Claude panel: active claude.ai session (login via the widget)
 
 ## Quick Start
 
 ```powershell
-git clone https://github.com/Mod41529/codex-pixel-widget.git
-cd codex-pixel-widget
+git clone https://github.com/lumatic2/ai-usage-widget.git
+cd ai-usage-widget
 npm install
 npm start
 ```
@@ -38,14 +41,14 @@ npm start
 ## Run Manually
 
 ```powershell
-cd codex-pixel-widget
+cd ai-usage-widget
 npm start
 ```
 
 Or:
 
 ```powershell
-.\start_codex_widget.ps1
+.\start_ai_usage_widget.ps1
 ```
 
 ## Build a Windows `.exe`
@@ -57,53 +60,58 @@ npm run dist
 
 Output:
 
-- `release/Codex Pixel Widget-win32-x64/Codex Pixel Widget.exe`
-- `release/Codex Pixel Widget-win32-x64.zip`
+- `release/AI Usage Widget-win32-x64/AI Usage Widget.exe`
+- `release/AI Usage Widget-win32-x64.zip`
 
-This is a portable build. No installer is required.
+Portable build — no installer required.
 
 ## Auto Start
 
 Windows startup shortcut:
 
-`C:\Users\1\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Codex Widget.lnk`
+`C:\Users\1\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\AI Usage Widget.lnk`
 
-After login, the widget should start automatically.
+After login, the widget starts automatically.
 
 ## Settings
 
 Runtime settings are stored at:
 
-`C:\Users\1\AppData\Roaming\codex-widget-electron\widget\settings.json`
+`C:\Users\1\AppData\Roaming\ai-usage-widget\widget\settings.json`
 
-Settings include:
-
-- window width / height
-- window x / y position
-- always-on-top
-- refresh interval
-- `displayMode` (`used` | `left`, default `used`)
-- `enableUsageAlerts` (`true` | `false`)
-- `usageAlertThresholds` (array of usage percentages, e.g. `[30,60,80,90]`)
-- `fetchTimeoutMs`
-- `fetchRetries`
-- `sessionScanTtlMs`
-- `openOnStartup` (applied on packaged app startup)
+| Setting | Description |
+|---|---|
+| `displayMode` | `used` or `left` (default: `used`) |
+| `refreshIntervalMs` | Refresh interval in milliseconds |
+| `enableUsageAlerts` | `true` / `false` |
+| `usageAlertThresholds` | Array of percentages, e.g. `[30,60,80,90]` |
+| `openOnStartup` | Open widget at Windows login |
+| `showClaude` | Show/hide Claude panel |
+| `showCodex` | Show/hide Codex panel |
+| `fetchTimeoutMs` | Request timeout |
+| `fetchRetries` | Retry count on failure |
+| `sessionScanTtlMs` | Session scan cache TTL |
 
 ## How It Works
 
-- Reads Codex usage from `https://chatgpt.com/backend-api/wham/usage`
-- Uses the local Codex auth file at `~/.codex/auth.json`
-- Reads recent rollout/session data from `~/.codex/sessions`
+**Codex panel**
+- Reads usage from `https://chatgpt.com/backend-api/wham/usage`
+- Uses local auth file at `~/.codex/auth.json`
+- Reads recent session data from `~/.codex/sessions`
+
+**Claude panel**
+- Reads usage from the Claude API via Bearer token
+- Fetches org UUID dynamically from your claude.ai session
+- Prompts login if no session is found
 
 No tokens are stored in this repository. Credentials stay on the local machine.
 
 ## Security
 
-- This repository does **not** contain your Codex tokens or `auth.json`
-- The app reads `~/.codex/auth.json` locally at runtime to query usage
-- Anyone running modified code on your machine could read that local auth file, so only run code you trust
-- The current code only uses the token to fetch Codex usage data and does not write credentials back to disk
+- This repository does **not** contain your tokens or auth files
+- The app reads local auth files at runtime only
+- Credentials are never written back to disk
+- Only run code you trust — anyone with local machine access could read the same auth files
 
 ## Development
 

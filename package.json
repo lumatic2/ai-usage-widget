@@ -1,14 +1,14 @@
 {
-  "name": "codex-widget-electron",
+  "name": "ai-usage-widget",
   "version": "0.1.0",
   "private": true,
-  "description": "Pixel-style floating Codex usage widget for Windows desktop.",
+  "description": "Pixel-style floating widget for monitoring Claude and Codex usage on Windows desktop.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "capture-preview": "electron ./scripts/capture-preview.js",
     "test": "node --test",
-    "dist": "electron-packager . \"Codex Pixel Widget\" --platform=win32 --arch=x64 --out=release --overwrite && powershell -NoProfile -Command \"if (Test-Path 'release/Codex Pixel Widget-win32-x64.zip') { Remove-Item 'release/Codex Pixel Widget-win32-x64.zip' -Force }; Compress-Archive -Path 'release/Codex Pixel Widget-win32-x64/*' -DestinationPath 'release/Codex Pixel Widget-win32-x64.zip'\""
+    "dist": "electron-packager . \"AI Usage Widget\" --platform=win32 --arch=x64 --out=release --overwrite && powershell -NoProfile -Command \"if (Test-Path 'release/AI Usage Widget-win32-x64.zip') { Remove-Item 'release/AI Usage Widget-win32-x64.zip' -Force }; Compress-Archive -Path 'release/AI Usage Widget-win32-x64/*' -DestinationPath 'release/AI Usage Widget-win32-x64.zip'\""
   },
   "devDependencies": {
     "@fontsource/silkscreen": "^5.2.6",

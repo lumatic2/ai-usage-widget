@@ -9,7 +9,13 @@ async function main() {
     planType: 'CODEX',
     primary: { usedPercent: 7, resetAfterSeconds: 17640 },
     secondary: { usedPercent: 4, resetAfterSeconds: 55260 },
-    sessionLabel: 'preview'
+    sessionLabel: 'preview',
+    claude: {
+      isConfigured: true,
+      needsLogin: false,
+      primary: { usedPercent: 42, resetAfterSeconds: 9240 },
+      secondary: { usedPercent: 18, resetAfterSeconds: 48600 }
+    }
   }));
 
   const outputDir = path.join(__dirname, '..', 'assets');
@@ -17,8 +23,8 @@ async function main() {
   const outputPath = path.join(outputDir, 'widget-screenshot.png');
 
   const win = new BrowserWindow({
-    width: 420,
-    height: 320,
+    width: 680,
+    height: 260,
     show: false,
     frame: false,
     transparent: true,

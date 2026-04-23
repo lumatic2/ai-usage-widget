@@ -11,3 +11,6 @@ Thumbs.db
 
 # Local screenshots or experiments
 *.log
+
+# Personal shortcuts (contain hardcoded local paths)
+create_shortcut.ps1

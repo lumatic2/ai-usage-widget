@@ -11,7 +11,7 @@ const {
   sanitizeThresholds
 } = require('./lib/widget-core');
 
-const APP_NAME = 'Codex Pixel Widget';
+const APP_NAME = 'AI Usage Widget';
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const ROLLOUT_TAIL_READ_BYTES = 256 * 1024;
 const CLAUDE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -836,7 +836,7 @@ function sendState(state) {
     const claudePrimaryPercent = computeDisplayPercent(state.claude?.primary?.usedPercent, displayMode);
     const claudeSecondaryPercent = computeDisplayPercent(state.claude?.secondary?.usedPercent, displayMode);
     const lines = [
-      'Codex Widget',
+      APP_NAME,
       state.error
         ? `CODEX ${state.error}`
         : `CODEX ${modeLabel(displayMode)} 5H ${codexPrimaryPercent}% | WEEK ${codexSecondaryPercent}%`
