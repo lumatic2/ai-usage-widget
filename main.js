@@ -368,7 +368,10 @@ async function openClaudeLoginWindow() {
     show: true,
     autoHideMenuBar: true,
     webPreferences: {
-      partition: CLAUDE_LOGIN_PARTITION
+      partition: CLAUDE_LOGIN_PARTITION,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
     }
   });
 
@@ -442,7 +445,10 @@ async function fetchClaudeUsageWithCookie(sessionKey, organizationUuid) {
   const hiddenWindow = new BrowserWindow({
     show: false,
     webPreferences: {
-      partition: CLAUDE_LOGIN_PARTITION
+      partition: CLAUDE_LOGIN_PARTITION,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
     }
   });
   hiddenWindow.webContents.setUserAgent(CLAUDE_CHROME_USER_AGENT);
@@ -1009,7 +1015,10 @@ function createWindow() {
     skipTaskbar: true,
     alwaysOnTop: settings.alwaysOnTop,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
     }
   });
 
