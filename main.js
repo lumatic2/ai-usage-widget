@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, Notification, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Notification, session, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -30,11 +30,11 @@ const DEFAULT_SETTINGS = {
   enableUsageAlerts: true,
   fetchTimeoutMs: 8000,
   fetchRetries: 2,
-  sessionScanTtlMs: 5 * 60 * 1000
+  sessionScanTtlMs: 5 * 60 * 1000,
+  consentAccepted: false
 };
 
 let mainWindow = null;
-let tray = null;
 let refreshTimer = null;
 let runtimeSettings = null;
 let sessionCache = {
@@ -99,7 +99,7 @@ function saveSettings(settings) {
 
 function sanitizeSettings(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...raw };
-  merged.width = Math.max(DEFAULT_SETTINGS.width, Number(merged.width || DEFAULT_SETTINGS.width));
+  merged.width = Math.max(SINGLE_PANEL_WIDTH, Number(merged.width || DEFAULT_SETTINGS.width));
   merged.height = Math.max(DEFAULT_SETTINGS.height, Number(merged.height || DEFAULT_SETTINGS.height));
   merged.refreshIntervalMs = clampInt(merged.refreshIntervalMs, 10000, 10 * 60 * 1000, DEFAULT_SETTINGS.refreshIntervalMs);
   merged.fetchTimeoutMs = clampInt(merged.fetchTimeoutMs, 2000, 60000, DEFAULT_SETTINGS.fetchTimeoutMs);
@@ -112,6 +112,7 @@ function sanitizeSettings(raw) {
   merged.alwaysOnTop = Boolean(merged.alwaysOnTop);
   merged.showClaude = Boolean(merged.showClaude);
   merged.showCodex = Boolean(merged.showCodex);
+  merged.consentAccepted = Boolean(merged.consentAccepted);
   if (!merged.showClaude && !merged.showCodex) {
     merged.showClaude = true;
   }
@@ -835,29 +836,6 @@ function sendState(state) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('widget-state', state);
   }
-  if (tray) {
-    const displayMode = state.displayMode || runtimeSettings?.displayMode || DEFAULT_SETTINGS.displayMode;
-    const codexPrimaryPercent = computeDisplayPercent(state.primary?.usedPercent, displayMode);
-    const codexSecondaryPercent = computeDisplayPercent(state.secondary?.usedPercent, displayMode);
-    const claudePrimaryPercent = computeDisplayPercent(state.claude?.primary?.usedPercent, displayMode);
-    const claudeSecondaryPercent = computeDisplayPercent(state.claude?.secondary?.usedPercent, displayMode);
-    const lines = [
-      APP_NAME,
-      state.error
-        ? `CODEX ${state.error}`
-        : `CODEX ${modeLabel(displayMode)} 5H ${codexPrimaryPercent}% | WEEK ${codexSecondaryPercent}%`
-    ];
-    if (state.claude?.isConfigured) {
-      lines.push(
-        state.claude.error && !state.claude.isCached
-          ? `CLAUDE ${state.claude.error}`
-          : `CLAUDE ${modeLabel(displayMode)} 5H ${Number.isFinite(claudePrimaryPercent) ? claudePrimaryPercent : '--'}% | WEEK ${Number.isFinite(claudeSecondaryPercent) ? claudeSecondaryPercent : '--'}%${state.claude.isCached ? ' (cached)' : ''}`
-      );
-    } else {
-      lines.push('CLAUDE Not configured');
-    }
-    tray.setToolTip(lines.join('\n'));
-  }
 }
 
 function applyOpenOnStartupSetting(settings) {
@@ -870,6 +848,13 @@ function applyOpenOnStartupSetting(settings) {
   });
 }
 
+const SINGLE_PANEL_WIDTH = 410;
+
+function targetWindowWidth(settings) {
+  const both = settings.showClaude && settings.showCodex;
+  return both ? DEFAULT_SETTINGS.width : SINGLE_PANEL_WIDTH;
+}
+
 function applyUpdatedSettings(partial) {
   const previous = runtimeSettings || loadSettings();
   const next = sanitizeSettings({ ...previous, ...partial });
@@ -879,6 +864,13 @@ function applyUpdatedSettings(partial) {
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(next.alwaysOnTop);
+    const desiredWidth = targetWindowWidth(next);
+    const [currentWidth, currentHeight] = mainWindow.getSize();
+    if (currentWidth !== desiredWidth) {
+      mainWindow.setSize(desiredWidth, currentHeight);
+      next.width = desiredWidth;
+      saveSettings(next);
+    }
   }
   if (refreshTimer && previous.refreshIntervalMs !== next.refreshIntervalMs) {
     clearInterval(refreshTimer);
@@ -973,37 +965,14 @@ async function refreshState() {
   }
 }
 
-function createTray() {
-  const svg = `
-    <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-      <rect x="8" y="8" width="48" height="48" rx="10" fill="#1a1620"/>
-      <rect x="14" y="14" width="20" height="14" fill="#5d3d31"/>
-      <rect x="18" y="28" width="12" height="16" fill="#f5db8b"/>
-      <rect x="40" y="20" width="8" height="24" fill="#7ca5cf"/>
-      <rect x="14" y="48" width="18" height="4" fill="#7ca5cf"/>
-      <rect x="36" y="48" width="18" height="4" fill="#efc57d"/>
-    </svg>
-  `;
-  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-  tray = new Tray(icon);
-  const menu = Menu.buildFromTemplate([
-    { label: 'Show Widget', click: () => mainWindow && mainWindow.show() },
-    { label: 'Hide Widget', click: () => mainWindow && mainWindow.hide() },
-    { type: 'separator' },
-    { label: 'Open Settings Folder', click: () => require('electron').shell.openPath(getAppDataDir()) },
-    { label: 'Quit', click: () => app.quit() }
-  ]);
-  tray.setContextMenu(menu);
-  tray.setToolTip(APP_NAME);
-  tray.on('double-click', () => mainWindow && mainWindow.show());
-}
 
 function createWindow() {
   const settings = runtimeSettings || loadSettings();
   const bounds = clampBounds({ x: settings.x, y: settings.y }, settings);
+  const width = targetWindowWidth(settings);
 
   mainWindow = new BrowserWindow({
-    width: settings.width,
+    width,
     height: settings.height,
     x: bounds.x,
     y: bounds.y,
@@ -1027,11 +996,8 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  mainWindow.on('close', (event) => {
-    if (!app.isQuiting) {
-      event.preventDefault();
-      mainWindow.hide();
-    }
+  mainWindow.on('close', () => {
+    app.isQuiting = true;
   });
   mainWindow.on('move', () => {
     const [x, y] = mainWindow.getPosition();
@@ -1115,22 +1081,68 @@ ipcMain.handle('widget:claude-logout', async () => {
 });
 
 ipcMain.on('widget:hide', () => {
-  if (mainWindow) {
-    mainWindow.hide();
-  }
+  app.quit();
 });
+
+function runFirstRunFlow() {
+  if (runtimeSettings.consentAccepted) return true;
+
+  const consent = dialog.showMessageBoxSync({
+    type: 'info',
+    title: `${APP_NAME} — first run`,
+    message: `${APP_NAME} reads your local AI usage data.`,
+    detail:
+      'On every refresh this app reads:\n' +
+      '  • ~/.codex/auth.json  (Codex bearer token)\n' +
+      '  • your claude.ai session cookie  (after you sign in via the widget)\n\n' +
+      'These tokens are used only to call the official Claude / Codex usage APIs. ' +
+      'They are never written back to disk by this app, never sent anywhere else, ' +
+      'and never leave your machine.\n\n' +
+      'Continue?',
+    buttons: ['Continue', 'Quit'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  if (consent !== 0) return false;
+
+  const pick = dialog.showMessageBoxSync({
+    type: 'question',
+    title: `${APP_NAME} — panels`,
+    message: 'Which panels would you like to show?',
+    detail: 'You can change this later from the gear icon (⚙) on the widget.',
+    buttons: ['Claude + Codex', 'Claude only', 'Codex only'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  const showClaude = pick !== 2;
+  const showCodex = pick !== 1;
+
+  runtimeSettings = sanitizeSettings({
+    ...runtimeSettings,
+    consentAccepted: true,
+    showClaude,
+    showCodex
+  });
+  saveSettings(runtimeSettings);
+  return true;
+}
 
 app.whenReady().then(() => {
   runtimeSettings = loadSettings();
+  if (!runFirstRunFlow()) {
+    app.quit();
+    return;
+  }
   applyOpenOnStartupSetting(runtimeSettings);
   createWindow();
-  createTray();
   refreshState();
   refreshTimer = setInterval(refreshState, runtimeSettings.refreshIntervalMs);
 });
 
-app.on('window-all-closed', (event) => {
-  event.preventDefault();
+app.on('window-all-closed', () => {
+  app.quit();
 });
 
 app.on('before-quit', () => {

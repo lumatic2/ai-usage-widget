@@ -68,15 +68,15 @@ body {
   align-items: flex-start;
 }
 
-.col--hidden {
-  visibility: hidden;
-}
-
 .col {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.col.col--hidden {
+  display: none;
 }
 
 .title-row {
@@ -485,12 +485,15 @@ body {
 }
 
 .settings-panel {
-  position: relative;
+  position: absolute;
+  top: 8px;
+  right: 8px;
   z-index: 5;
-  width: 100%;
-  margin-top: 10px;
+  width: 240px;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
   padding: 8px 10px;
-  background: rgba(12, 15, 22, 0.9);
+  background: rgba(12, 15, 22, 0.95);
   border: 3px solid #2b313c;
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.2);
   clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);

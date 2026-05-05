@@ -4,6 +4,16 @@
   "private": true,
   "description": "Pixel-style floating widget for monitoring Claude and Codex usage on Windows desktop.",
   "main": "main.js",
+  "license": "MIT",
+  "author": "lumatic2",
+  "homepage": "https://github.com/lumatic2/ai-usage-widget#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lumatic2/ai-usage-widget.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lumatic2/ai-usage-widget/issues"
+  },
   "scripts": {
     "start": "electron .",
     "capture-preview": "electron ./scripts/capture-preview.js",

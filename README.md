@@ -19,7 +19,6 @@ Shows for each AI tool:
 - Toggle each panel on/off from settings
 - Frameless transparent window
 - Draggable and always-on-top
-- System tray integration
 - Auto-refresh from local auth/session files
 
 ## Requirements
@@ -65,11 +64,22 @@ Output:
 
 Portable build — no installer required.
 
+### Windows SmartScreen on first launch
+
+The build is **not code-signed**, so Windows may show *"Windows protected your PC"* the first time you run `AI Usage Widget.exe`. This is expected for unsigned hobby apps.
+
+To run anyway:
+
+1. Click **More info**
+2. Click **Run anyway**
+
+If you'd rather verify the source yourself, build from source with `npm install && npm start` instead.
+
 ## Auto Start
 
 Windows startup shortcut:
 
-`C:\Users\1\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\AI Usage Widget.lnk`
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AI Usage Widget.lnk`
 
 After login, the widget starts automatically.
 
@@ -77,7 +87,7 @@ After login, the widget starts automatically.
 
 Runtime settings are stored at:
 
-`C:\Users\1\AppData\Roaming\ai-usage-widget\widget\settings.json`
+`%APPDATA%\ai-usage-widget\widget\settings.json`
 
 | Setting | Description |
 |---|---|
