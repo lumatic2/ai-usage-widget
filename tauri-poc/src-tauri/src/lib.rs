@@ -1,13 +1,14 @@
 mod claude;
 mod codex;
+mod session;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const LAST_GOOD_TTL: Duration = Duration::from_secs(5 * 60);
 use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
 };
@@ -99,6 +100,26 @@ struct AppState {
     settings: Mutex<PublicSettings>,
     settings_path: PathBuf,
     alert_state: Mutex<UsageAlertState>,
+    session_cache: Mutex<session::SessionCache>,
+    last_codex_good: Mutex<Option<CachedCodex>>,
+    last_claude_good: Mutex<Option<CachedClaude>>,
+}
+
+#[derive(Clone)]
+struct CachedCodex {
+    fetched_at: Instant,
+    plan_type: String,
+    primary: WindowSlice,
+    secondary: WindowSlice,
+}
+
+#[derive(Clone)]
+struct CachedClaude {
+    fetched_at: Instant,
+    primary: WindowSlice,
+    secondary: WindowSlice,
+    #[allow(dead_code)]
+    org_uuid: String,
 }
 
 #[derive(Default)]
@@ -141,18 +162,25 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
     let (codex_result, claude_result) = futures_join(codex_future, claude_future).await;
 
     let (plan_type, primary, secondary, error) = match codex_result {
-        Ok(u) => (u.plan_type, u.primary, u.secondary, None),
-        Err(e) => (
-            "CODEX".into(),
-            WindowSlice::default(),
-            WindowSlice::default(),
-            Some(e),
-        ),
+        Ok(u) => {
+            store_codex_cache(app, &u);
+            (u.plan_type, u.primary, u.secondary, None)
+        }
+        Err(e) => match read_codex_cache(app) {
+            Some(cached) => (cached.plan_type, cached.primary, cached.secondary, Some(e)),
+            None => (
+                "CODEX".into(),
+                WindowSlice::default(),
+                WindowSlice::default(),
+                Some(e),
+            ),
+        },
     };
 
     let claude = match claude_result {
         Ok(u) => {
             persist_org_uuid(app, &u.org_uuid);
+            store_claude_cache(app, &u);
             ClaudeState {
                 is_configured: true,
                 needs_login: false,
@@ -178,13 +206,23 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             error: Some("Claude session expired. Please log in again.".into()),
             is_cached: false,
         },
-        Err(claude::ClaudeError::Other(msg)) => ClaudeState {
-            is_configured: true,
-            needs_login: false,
-            primary: WindowSlice::default(),
-            secondary: WindowSlice::default(),
-            error: Some(msg),
-            is_cached: false,
+        Err(claude::ClaudeError::Other(msg)) => match read_claude_cache(app) {
+            Some(cached) => ClaudeState {
+                is_configured: true,
+                needs_login: false,
+                primary: cached.primary,
+                secondary: cached.secondary,
+                error: Some(msg),
+                is_cached: true,
+            },
+            None => ClaudeState {
+                is_configured: true,
+                needs_login: false,
+                primary: WindowSlice::default(),
+                secondary: WindowSlice::default(),
+                error: Some(msg),
+                is_cached: false,
+            },
         },
     };
 
@@ -193,10 +231,76 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         primary,
         secondary,
         claude,
-        session_label: "Mock session".into(),
+        session_label: load_session_label(app, settings),
         display_mode: settings.display_mode.clone(),
         error,
     }
+}
+
+fn store_codex_cache(app: &tauri::AppHandle, usage: &codex::CodexUsage) {
+    let Some(state) = app.try_state::<AppState>() else { return; };
+    if let Ok(mut guard) = state.last_codex_good.lock() {
+        *guard = Some(CachedCodex {
+            fetched_at: Instant::now(),
+            plan_type: usage.plan_type.clone(),
+            primary: usage.primary.clone(),
+            secondary: usage.secondary.clone(),
+        });
+    };
+}
+
+fn read_codex_cache(app: &tauri::AppHandle) -> Option<CachedCodex> {
+    let state = app.try_state::<AppState>()?;
+    let guard = state.last_codex_good.lock().ok()?;
+    let cached = guard.as_ref()?;
+    if cached.fetched_at.elapsed() <= LAST_GOOD_TTL {
+        Some(cached.clone())
+    } else {
+        None
+    }
+}
+
+fn store_claude_cache(app: &tauri::AppHandle, usage: &claude::ClaudeUsage) {
+    let Some(state) = app.try_state::<AppState>() else { return; };
+    if let Ok(mut guard) = state.last_claude_good.lock() {
+        *guard = Some(CachedClaude {
+            fetched_at: Instant::now(),
+            primary: usage.primary.clone(),
+            secondary: usage.secondary.clone(),
+            org_uuid: usage.org_uuid.clone(),
+        });
+    };
+}
+
+fn read_claude_cache(app: &tauri::AppHandle) -> Option<CachedClaude> {
+    let state = app.try_state::<AppState>()?;
+    let mut guard = state.last_claude_good.lock().ok()?;
+
+    let rolled_over = guard.as_ref().is_some_and(|cached| {
+        matches!(cached.primary.reset_after_seconds, Some(reset)
+            if reset >= 0 && cached.fetched_at.elapsed().as_secs() as i64 >= reset)
+    });
+    if rolled_over {
+        *guard = None;
+        return None;
+    }
+
+    let cached = guard.as_ref()?;
+    if cached.fetched_at.elapsed() <= LAST_GOOD_TTL {
+        Some(cached.clone())
+    } else {
+        None
+    }
+}
+
+fn load_session_label(app: &tauri::AppHandle, settings: &PublicSettings) -> String {
+    let Some(state) = app.try_state::<AppState>() else {
+        return "Recent session".into();
+    };
+    let Ok(mut cache) = state.session_cache.lock() else {
+        return "Recent session".into();
+    };
+    session::load_label(&mut *cache, settings.session_scan_ttl_ms)
 }
 
 async fn futures_join<A, B, T1, T2>(a: A, b: B) -> (T1, T2)
@@ -276,20 +380,20 @@ fn dispatch_alerts(app: &tauri::AppHandle, settings: &PublicSettings, state: &Wi
 async fn fetch_claude_with_fallback(
     settings: &PublicSettings,
 ) -> Result<claude::ClaudeUsage, claude::ClaudeError> {
-    match claude::fetch_usage(settings.fetch_timeout_ms, settings.cached_org_uuid.clone()).await {
-        Ok(u) => Ok(u),
-        Err(claude::ClaudeError::SessionExpired) => match settings.claude_session_key.as_ref() {
-            Some(sk) if !sk.is_empty() => {
-                claude::fetch_usage_with_cookie(
-                    settings.fetch_timeout_ms,
-                    sk,
-                    settings.cached_org_uuid.clone(),
-                )
-                .await
-            }
-            _ => Err(claude::ClaudeError::SessionExpired),
-        },
-        Err(other) => Err(other),
+    let bearer = claude::fetch_usage(settings.fetch_timeout_ms, settings.cached_org_uuid.clone()).await;
+    if let Ok(u) = bearer {
+        return Ok(u);
+    }
+    match settings.claude_session_key.as_ref() {
+        Some(sk) if !sk.is_empty() => {
+            claude::fetch_usage_with_cookie(
+                settings.fetch_timeout_ms,
+                sk,
+                settings.cached_org_uuid.clone(),
+            )
+            .await
+        }
+        _ => bearer,
     }
 }
 
@@ -439,6 +543,10 @@ async fn poll_claude_session_cookie(app: tauri::AppHandle) {
             continue;
         }
 
+        let resolved_uuid = claude::resolve_org_uuid_with_cookie(15_000, &session_key)
+            .await
+            .ok();
+
         if let Some(state) = app.try_state::<AppState>() {
             let snapshot = {
                 let mut guard = match state.settings.lock() {
@@ -446,10 +554,13 @@ async fn poll_claude_session_cookie(app: tauri::AppHandle) {
                     Err(_) => return,
                 };
                 guard.claude_session_key = Some(session_key);
+                if let Some(uuid) = resolved_uuid {
+                    guard.cached_org_uuid = Some(uuid);
+                }
                 guard.clone()
             };
             save_to_disk(&state.settings_path, &snapshot);
-        }
+        };
 
         let _ = window.close();
         if let Some(state) = app.try_state::<AppState>() {
@@ -477,89 +588,7 @@ async fn claude_logout(state: tauri::State<'_, AppState>) -> Result<bool, String
 
 #[tauri::command]
 async fn hide_widget(app: tauri::AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.hide();
-    }
-}
-
-fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "Show widget", true, None::<&str>)?;
-    let hide_item = MenuItem::with_id(app, "hide", "Hide widget", true, None::<&str>)?;
-    let toggle_top = MenuItem::with_id(app, "toggle_top", "Toggle always-on-top", true, None::<&str>)?;
-    let refresh_item = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &hide_item, &toggle_top, &refresh_item, &quit_item])?;
-
-    TrayIconBuilder::with_id("main-tray")
-        .tooltip("AI Usage Widget")
-        .icon(app.default_window_icon().cloned().unwrap())
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
-            "hide" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.hide();
-                }
-            }
-            "toggle_top" => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    let next = {
-                        let mut guard = match state.settings.lock() {
-                            Ok(g) => g,
-                            Err(_) => return,
-                        };
-                        guard.always_on_top = !guard.always_on_top;
-                        guard.clone()
-                    };
-                    save_to_disk(&state.settings_path, &next);
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.set_always_on_top(next.always_on_top);
-                    }
-                }
-            }
-            "refresh" => {
-                let app_handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let settings = match app_handle
-                        .try_state::<AppState>()
-                        .and_then(|s| s.settings.lock().ok().map(|g| g.clone()))
-                    {
-                        Some(s) => s,
-                        None => return,
-                    };
-                    let state = build_widget_state(&app_handle, &settings).await;
-                    emit_usage_update(&app_handle, &settings, state);
-                });
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
-                }
-            }
-        })
-        .build(app)?;
-    Ok(())
+    app.exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -585,9 +614,10 @@ pub fn run() {
                 settings: Mutex::new(loaded),
                 settings_path,
                 alert_state: Mutex::new(UsageAlertState::default()),
+                session_cache: Mutex::new(session::SessionCache::default()),
+                last_codex_good: Mutex::new(None),
+                last_claude_good: Mutex::new(None),
             });
-
-            setup_tray(&app.handle().clone())?;
 
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

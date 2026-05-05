@@ -276,6 +276,46 @@ async fn fetch_usage_payload_with_cookie(
     payload.ok_or_else(|| ClaudeError::Other("Claude usage response was empty".into()))
 }
 
+pub async fn resolve_org_uuid_with_cookie(
+    timeout_ms: u64,
+    session_key: &str,
+) -> Result<String, ClaudeError> {
+    let client = build_client(timeout_ms)?;
+    let resp = client
+        .get(ORGS_URL)
+        .header("Cookie", format!("sessionKey={session_key}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| ClaudeError::Other(e.to_string()))?;
+    let status = resp.status();
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return Err(ClaudeError::SessionExpired);
+    }
+    if !status.is_success() {
+        return Err(ClaudeError::Other(format!(
+            "Claude organizations request failed: {}",
+            status.as_u16()
+        )));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ClaudeError::Other(format!("organizations parse error: {e}")))?;
+    let uuid = match &body {
+        serde_json::Value::Array(arr) => arr
+            .first()
+            .and_then(|x| x.get("uuid"))
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string()),
+        serde_json::Value::Object(_) => body.get("uuid").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        _ => None,
+    };
+    uuid.filter(|s| !s.is_empty())
+        .ok_or_else(|| ClaudeError::Other("Claude org UUID not found".into()))
+}
+
 pub async fn fetch_usage_with_cookie(
     timeout_ms: u64,
     session_key: &str,
@@ -284,7 +324,7 @@ pub async fn fetch_usage_with_cookie(
     let client = build_client(timeout_ms)?;
     let org_uuid = match cached_org_uuid {
         Some(u) if !u.is_empty() => u,
-        _ => return Err(ClaudeError::Other("Claude org UUID unavailable for cookie fallback".into())),
+        _ => resolve_org_uuid_with_cookie(timeout_ms, session_key).await?,
     };
     let payload = fetch_usage_payload_with_cookie(&client, session_key, &org_uuid).await?;
     Ok(ClaudeUsage {
