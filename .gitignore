@@ -5,7 +5,18 @@ dist/
 out/
 release/
 
-# Electron / local runtime data
+# Tauri / Rust build artifacts
+target/
+**/target/
+*.pdb
+
+# Local archive of legacy Electron sources (kept locally, not tracked)
+archive/
+
+# Project-local notes
+CLAUDE.local.md
+
+# OS / editor cruft
 .DS_Store
 Thumbs.db
 

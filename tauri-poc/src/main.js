@@ -1,3 +1,24 @@
+// === Tauri shim — bridges legacy window.codexWidget API to Tauri invoke/event ===
+(function () {
+  const invoke = window.__TAURI__.core.invoke;
+  const listen = window.__TAURI__.event.listen;
+  window.codexWidget = {
+    getInitialState: () => invoke('get_initial_state'),
+    getSettings: () => invoke('get_settings'),
+    updateSettings: (partial) => invoke('update_settings', { partial }),
+    setDisplayMode: (mode) => invoke('set_display_mode', { mode }),
+    refreshNow: () => invoke('refresh_now'),
+    claudeLogin: () => invoke('claude_login'),
+    claudeLogout: () => invoke('claude_logout'),
+    hide: () => invoke('hide_widget'),
+    onState: (cb) => {
+      let unlistenFn = null;
+      listen('widget-state', (e) => cb(e.payload)).then((u) => { unlistenFn = u; });
+      return () => unlistenFn && unlistenFn();
+    }
+  };
+})();
+
 const primaryValue = document.getElementById('primaryValue');
 const secondaryValue = document.getElementById('secondaryValue');
 const primaryProgress = document.getElementById('primaryProgress');

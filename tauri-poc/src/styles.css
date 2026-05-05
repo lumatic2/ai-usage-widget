@@ -1,5 +1,4 @@
-@import url("../node_modules/@fontsource/silkscreen/400.css");
-@import url("../node_modules/@fontsource/silkscreen/700.css");
+@import url("https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap");
 
 :root {
   color-scheme: dark;
