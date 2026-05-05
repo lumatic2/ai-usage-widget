@@ -33,16 +33,23 @@
 
 목표: Electron(~150MB, ~150MB RAM) → Tauri(~10MB, ~30MB RAM). 외부 공유 시 사용자 설치 마찰 감소.
 
-### Phase A — PoC (1일, `tauri-migration-poc` 브랜치)
-- [ ] Rust toolchain 설치 (`rustup`) + Tauri CLI
-- [ ] Claude 로그인 쿠키 추출 PoC — Tauri의 WebviewWindow + cookie store API로 sessionKey 획득 가능한지 확인. **이게 안 되면 마이그레이션 폐기**
-- [ ] Codex auth.json 읽기 + Bearer fetch PoC (단순 — `reqwest`)
-- [ ] PoC 결과 평가: Go/No-Go 결정
+### Phase A — PoC ✅
+- [x] Rust toolchain 설치 (`rustup` + MSVC Build Tools 2022 + Win11 SDK)
+- [x] Smart App Control off (Rust unsigned 빌드 산출물 차단 회피)
+- [x] Claude 로그인 쿠키 추출 PoC — `WebviewWindow::cookies_for_url`로 sessionKey 획득 검증됨
+- [x] PoC 결과 평가: **Go**
 
-### Phase B — 본격 이식 (Go일 경우, 1~2일)
-- [ ] Tauri 프로젝트 스캐폴드, 창 설정 이식 (frameless, transparent, alwaysOnTop)
-- [ ] `renderer/`를 `src/`로 복사, preload → `invoke()` 패턴 치환
-- [ ] `main.js` 백엔드 로직을 Rust로 포팅 (settings, fetch, login, alerts, refresh timer)
+### Phase B — 본격 이식
+- [x] Tauri 프로젝트 스캐폴드 (`tauri-poc/`), 창 설정 이식 (frameless, transparent, alwaysOnTop, skipTaskbar, shadow off, 780/410×320)
+- [x] `renderer/`를 `tauri-poc/src/`로 복사. preload → `window.codexWidget` shim으로 `invoke()`/`listen()` 매핑
+- [x] `data-tauri-drag-region` 도입 (Tauri는 Electron의 `-webkit-app-region` CSS 무시)
+- [x] Silkscreen 폰트 — Google Fonts CDN으로 전환 (tauri-poc 자체 node_modules에는 @fontsource 미설치)
+- [x] Settings 디스크 영속화 — `%APPDATA%/com.lumatic2.ai-usage-widget/settings.json`
+- [x] 위치 자동 저장 + 시작 시 복원 (`WindowEvent::Moved` hook)
+- [x] 패널 토글 시 창 자동 리사이즈 (Rust 측 `set_size` 호출)
+- [ ] **(다음)** `main.js` 백엔드 로직 포팅 — Codex auth.json 읽기 + ChatGPT usage fetch (`reqwest`)
+- [ ] Claude usage fetch — Bearer + 쿠키 fallback 흐름 Rust 포팅
+- [ ] 사용량 임계치 알림 (`notify-rust`) + refresh timer (`tokio::time`)
 - [ ] `lib/widget-core.js` 순수 함수 Rust 포팅 + 테스트 이식
 - [ ] `npm run tauri build` → MSI/portable exe 산출, 크기·동작 검증
 - [ ] README 업데이트 (Quick Start, Build 섹션을 Tauri 기준으로)
@@ -58,6 +65,7 @@
 
 ## 완료 이력
 
+- 2026-05-05 — **Tauri Phase A 완료 + Phase B step 1** (`15a3754`, 브랜치 `tauri-migration-poc`). 스캐폴드·창 설정·렌더러 이식·shim·settings 디스크 영속화·위치 자동저장 검증. Mock 데이터로 UI 렌더링 OK. 다음: 백엔드 fetch 로직 Rust 포팅
 - 2026-05-05 — **Milestone 1 완료** (외부 공유 준비). 동의 + 패널 선택 첫 실행 흐름, 트레이 제거, 패널 토글 + 자동 리사이즈, CSS specificity 버그, README 정비
 - 2026-04-24 (`b21985d`) — main widget window의 `sandbox: true` 제거
 - 2026-04-24 (`794ae51`) — 모든 BrowserWindow에 명시적 webPreferences hardening
