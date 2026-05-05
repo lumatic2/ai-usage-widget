@@ -1,6 +1,6 @@
 # Roadmap
 
-> 마지막 업데이트: 2026-05-05
+> 마지막 업데이트: 2026-05-05 (Phase B 본체 완료 반영)
 
 외부 공유용 polish 중심. 우선순위 = 배포 신뢰도에 미치는 영향 순.
 
@@ -41,25 +41,30 @@
 - [x] Claude 로그인 쿠키 추출 PoC — `WebviewWindow::cookies_for_url`로 sessionKey 획득 검증됨
 - [x] PoC 결과 평가: **Go**
 
-### Phase B — 본격 이식
+### Phase B — 본격 이식 ✅ (남은 polish 1건)
 - [x] Tauri 프로젝트 스캐폴드 (`tauri-poc/`), 창 설정 이식 (frameless, transparent, alwaysOnTop, skipTaskbar, shadow off, 780/410×320)
 - [x] `renderer/`를 `tauri-poc/src/`로 복사. preload → `window.codexWidget` shim으로 `invoke()`/`listen()` 매핑
-- [x] `data-tauri-drag-region` 도입 (Tauri는 Electron의 `-webkit-app-region` CSS 무시)
-- [x] Silkscreen 폰트 — Google Fonts CDN으로 전환 (tauri-poc 자체 node_modules에는 @fontsource 미설치)
-- [x] Settings 디스크 영속화 — `%APPDATA%/com.lumatic2.ai-usage-widget/settings.json`
-- [x] 위치 자동 저장 + 시작 시 복원 (`WindowEvent::Moved` hook)
-- [x] 패널 토글 시 창 자동 리사이즈 (Rust 측 `set_size` 호출)
-- [ ] **(다음)** `main.js` 백엔드 로직 포팅 — Codex auth.json 읽기 + ChatGPT usage fetch (`reqwest`)
-- [ ] Claude usage fetch — Bearer + 쿠키 fallback 흐름 Rust 포팅
-- [ ] 사용량 임계치 알림 (`notify-rust`) + refresh timer (`tokio::time`)
-- [ ] `lib/widget-core.js` 순수 함수 Rust 포팅 + 테스트 이식
-- [ ] `npm run tauri build` → MSI/portable exe 산출, 크기·동작 검증
-- [ ] README 업데이트 (Quick Start, Build 섹션을 Tauri 기준으로)
+- [x] `data-tauri-drag-region` 도입
+- [x] Silkscreen 폰트 — Google Fonts CDN
+- [x] Settings 디스크 영속화 — `%APPDATA%/com.lumatic2.ai-usage-widget/settings.json` + sanitize/clamp
+- [x] 위치 자동 저장 + 시작 시 복원
+- [x] 패널 토글 시 창 자동 리사이즈
+- [x] **Codex 백엔드 포팅** (`codex.rs`) — `auth.json` Bearer + retry (`fetch_retries` 횟수, 401/403 즉시 expired, 429/5xx 백오프, status check가 JSON 파싱보다 먼저)
+- [x] **Claude 백엔드 포팅** (`claude.rs`) — Bearer + 쿠키 fallback 둘 다 retry. Org UUID는 settings에 캐시. `poll_claude_session_cookie`가 sessionKey + org UUID 같이 잡음
+- [x] **Refresh timer** — `tauri::async_runtime::spawn` + `tokio::time::sleep` 루프, `usage:update` emit
+- [x] **세션 라벨** (`session.rs`) — `~/.codex/sessions/`에서 최신 rollout-*.jsonl 256KB tail 파싱, TTL/mtime 캐시
+- [x] **Last-good 캐시** — Codex/Claude 각각 5분 TTL. fetch 실패 시 stale 값 + error 메시지로 패널 유지 (Claude는 5h window rollover 시 자동 무효화)
+- [x] **임계값 알림** — `tauri-plugin-notification` (Windows toast). per-window `WindowAlertSlot` (last_value + notified set, 10% drop 시 reset 감지)
+- [x] **TLS 호환성** — `rustls-tls-native-roots` (Windows SChannel + 사내 CA)
+- [x] **자동 시작** — `tauri-plugin-autostart` (`openOnStartup` 토글 동기화)
+- [x] **Production build 검증** — `tauri-poc.exe` **13MB**, NSIS **2.9MB**, MSI **4.3MB**, cold start **664ms** (warm WV2), Rust 본체 RSS **47MB** + WebView2 자식 6개 합 ~352MB. ROADMAP 가설 "30MB RAM"은 틀렸으나 디스크 11.5× 절감은 외부 공유 마찰의 핵심
+- [ ] **(남음)** `lib/widget-core.js` 순수 함수 + 테스트 Rust 포팅 (현재는 일부 인라인 구현)
 
-### Phase C — 정리 (반나절)
-- [ ] Electron 의존성 제거 (`electron`, `@electron/packager`, `@fontsource/silkscreen` 빌드 경로 검토)
-- [ ] 기존 Electron 코드는 `archive/electron/`로 이동 또는 삭제
-- [ ] CI 릴리스 워크플로 Tauri 빌드로 전환
+### Phase C — 정리 (merge 시점에 일괄)
+- [ ] 첫 실행 UX (consent + panel selection) Tauri 측에 포팅 — Milestone 1 동등 수준
+- [ ] `tauri-migration-poc` → `main` merge 시 Electron 흔적 제거: `main.js`, `preload.js`, `package.json`의 `electron`/`electron-packager` deps, `start_ai_usage_widget.ps1`, `create_shortcut.ps1` → `archive/electron/`로 이동 (gitignored)
+- [ ] README 갱신 — Quick Start / Build 섹션을 Tauri 기준으로 (`npm run tauri dev` / `npm run tauri build`, 산출물 위치 등)
+- [ ] CI 릴리스 워크플로 Tauri 빌드로 전환 (Milestone 2의 GitHub Actions 항목과 통합)
 
 ### 위험 / 폐기 조건
 - Phase A에서 Claude sessionKey 추출 불가 시 폐기 (Electron 유지)
@@ -67,7 +72,8 @@
 
 ## 완료 이력
 
-- 2026-05-05 — **Tauri Phase A 완료 + Phase B step 1** (`15a3754`, 브랜치 `tauri-migration-poc`). 스캐폴드·창 설정·렌더러 이식·shim·settings 디스크 영속화·위치 자동저장 검증. Mock 데이터로 UI 렌더링 OK. 다음: 백엔드 fetch 로직 Rust 포팅
+- 2026-05-05 — **Tauri Phase B 본체 완료** (`2161069` + 후속 commits, 브랜치 `tauri-migration-poc`). Codex/Claude fetch + retry + 쿠키 fallback + 세션 라벨 + last-good 캐시 + autostart + 임계값 알림. Production build 산출 검증 (exe 13MB, NSIS 2.9MB, cold start 664ms). 남은 polish: widget-core 테스트 포팅, 첫 실행 UX
+- 2026-05-05 — **Tauri Phase A 완료 + Phase B step 1** (`15a3754`). 스캐폴드·창 설정·렌더러 이식·shim·settings 디스크 영속화·위치 자동저장
 - 2026-05-05 — **Milestone 1 완료** (외부 공유 준비). 동의 + 패널 선택 첫 실행 흐름, 트레이 제거, 패널 토글 + 자동 리사이즈, CSS specificity 버그, README 정비
 - 2026-04-24 (`b21985d`) — main widget window의 `sandbox: true` 제거
 - 2026-04-24 (`794ae51`) — 모든 BrowserWindow에 명시적 webPreferences hardening

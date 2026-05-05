@@ -164,47 +164,94 @@ fn detect_permission_error(payload: &serde_json::Value) -> bool {
         || matches!(nested.as_deref(), Some("permission_error"))
 }
 
-async fn fetch_usage_payload(
+enum AuthHeader<'a> {
+    Bearer(&'a str),
+    Cookie(&'a str),
+}
+
+async fn fetch_usage_payload_inner(
     client: &reqwest::Client,
-    access_token: &str,
+    auth: &AuthHeader<'_>,
     org_uuid: &str,
+    max_retries: u32,
 ) -> Result<serde_json::Value, ClaudeError> {
     let url = format!(
         "https://claude.ai/api/organizations/{}/usage",
         urlencoding(org_uuid)
     );
-    let resp = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
-        .send()
-        .await
-        .map_err(|e| ClaudeError::Other(e.to_string()))?;
-    let status = resp.status();
-    let body_text = resp
-        .text()
-        .await
-        .map_err(|e| ClaudeError::Other(e.to_string()))?;
-    let payload: Option<serde_json::Value> = if body_text.is_empty() {
-        None
-    } else {
-        serde_json::from_str(&body_text).ok()
-    };
-    let permission_error = payload
-        .as_ref()
-        .map(detect_permission_error)
-        .unwrap_or(false);
-    if status.as_u16() == 401 || status.as_u16() == 403 || permission_error {
-        return Err(ClaudeError::SessionExpired);
+    let mut last_other: Option<ClaudeError> = None;
+    for attempt in 0..=max_retries {
+        let req = client
+            .get(&url)
+            .header("Accept", "application/json")
+            .header("User-Agent", USER_AGENT);
+        let req = match auth {
+            AuthHeader::Bearer(t) => req.header("Authorization", format!("Bearer {t}")),
+            AuthHeader::Cookie(c) => req.header("Cookie", format!("sessionKey={c}")),
+        };
+        let send_result = req.send().await;
+        let resp = match send_result {
+            Ok(r) => r,
+            Err(e) => {
+                let retryable = e.is_timeout() || e.is_connect() || e.is_request() || e.is_body();
+                let msg = if e.is_timeout() {
+                    "Claude usage request timed out.".to_string()
+                } else {
+                    e.to_string()
+                };
+                if retryable && attempt < max_retries {
+                    sleep_backoff(attempt).await;
+                    last_other = Some(ClaudeError::Other(msg));
+                    continue;
+                }
+                return Err(ClaudeError::Other(msg));
+            }
+        };
+        let status = resp.status();
+        let body_text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => return Err(ClaudeError::Other(e.to_string())),
+        };
+        let payload: Option<serde_json::Value> = if body_text.is_empty() {
+            None
+        } else {
+            serde_json::from_str(&body_text).ok()
+        };
+        let permission_error = payload.as_ref().map(detect_permission_error).unwrap_or(false);
+        if status.as_u16() == 401 || status.as_u16() == 403 || permission_error {
+            return Err(ClaudeError::SessionExpired);
+        }
+        if !status.is_success() {
+            let code = status.as_u16();
+            let retryable = code == 429 || code >= 500;
+            if retryable && attempt < max_retries {
+                sleep_backoff(attempt).await;
+                last_other = Some(ClaudeError::Other(format!(
+                    "Claude usage request failed: {code}"
+                )));
+                continue;
+            }
+            return Err(ClaudeError::Other(format!(
+                "Claude usage request failed: {code}"
+            )));
+        }
+        return payload.ok_or_else(|| ClaudeError::Other("Claude usage response was empty".into()));
     }
-    if !status.is_success() {
-        return Err(ClaudeError::Other(format!(
-            "Claude usage request failed: {}",
-            status.as_u16()
-        )));
-    }
-    payload.ok_or_else(|| ClaudeError::Other("Claude usage response was empty".into()))
+    Err(last_other.unwrap_or_else(|| ClaudeError::Other("Claude usage request failed".into())))
+}
+
+async fn sleep_backoff(attempt: u32) {
+    let ms = 400u64 * u64::from(attempt + 1);
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+}
+
+async fn fetch_usage_payload(
+    client: &reqwest::Client,
+    access_token: &str,
+    org_uuid: &str,
+    max_retries: u32,
+) -> Result<serde_json::Value, ClaudeError> {
+    fetch_usage_payload_inner(client, &AuthHeader::Bearer(access_token), org_uuid, max_retries).await
 }
 
 fn urlencoding(s: &str) -> String {
@@ -220,6 +267,7 @@ fn urlencoding(s: &str) -> String {
 
 pub async fn fetch_usage(
     timeout_ms: u64,
+    max_retries: u32,
     cached_org_uuid: Option<String>,
 ) -> Result<ClaudeUsage, ClaudeError> {
     let creds = load_credentials().ok_or(ClaudeError::NotConfigured)?;
@@ -228,7 +276,7 @@ pub async fn fetch_usage(
         Some(u) => u,
         None => resolve_org_uuid(&client, &creds.access_token).await?,
     };
-    let payload = fetch_usage_payload(&client, &creds.access_token, &org_uuid).await?;
+    let payload = fetch_usage_payload(&client, &creds.access_token, &org_uuid, max_retries).await?;
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
@@ -240,40 +288,9 @@ async fn fetch_usage_payload_with_cookie(
     client: &reqwest::Client,
     session_key: &str,
     org_uuid: &str,
+    max_retries: u32,
 ) -> Result<serde_json::Value, ClaudeError> {
-    let url = format!(
-        "https://claude.ai/api/organizations/{}/usage",
-        urlencoding(org_uuid)
-    );
-    let resp = client
-        .get(&url)
-        .header("Cookie", format!("sessionKey={session_key}"))
-        .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
-        .send()
-        .await
-        .map_err(|e| ClaudeError::Other(e.to_string()))?;
-    let status = resp.status();
-    let body_text = resp
-        .text()
-        .await
-        .map_err(|e| ClaudeError::Other(e.to_string()))?;
-    let payload: Option<serde_json::Value> = if body_text.is_empty() {
-        None
-    } else {
-        serde_json::from_str(&body_text).ok()
-    };
-    let permission_error = payload.as_ref().map(detect_permission_error).unwrap_or(false);
-    if status.as_u16() == 401 || status.as_u16() == 403 || permission_error {
-        return Err(ClaudeError::SessionExpired);
-    }
-    if !status.is_success() {
-        return Err(ClaudeError::Other(format!(
-            "Claude usage request failed: {}",
-            status.as_u16()
-        )));
-    }
-    payload.ok_or_else(|| ClaudeError::Other("Claude usage response was empty".into()))
+    fetch_usage_payload_inner(client, &AuthHeader::Cookie(session_key), org_uuid, max_retries).await
 }
 
 pub async fn resolve_org_uuid_with_cookie(
@@ -318,6 +335,7 @@ pub async fn resolve_org_uuid_with_cookie(
 
 pub async fn fetch_usage_with_cookie(
     timeout_ms: u64,
+    max_retries: u32,
     session_key: &str,
     cached_org_uuid: Option<String>,
 ) -> Result<ClaudeUsage, ClaudeError> {
@@ -326,7 +344,7 @@ pub async fn fetch_usage_with_cookie(
         Some(u) if !u.is_empty() => u,
         _ => resolve_org_uuid_with_cookie(timeout_ms, session_key).await?,
     };
-    let payload = fetch_usage_payload_with_cookie(&client, session_key, &org_uuid).await?;
+    let payload = fetch_usage_payload_with_cookie(&client, session_key, &org_uuid, max_retries).await?;
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),

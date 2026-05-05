@@ -12,6 +12,7 @@ use tauri::{
     Emitter, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
 const DEFAULT_WIDTH: u32 = 780;
@@ -141,10 +142,11 @@ fn target_width(s: &PublicSettings) -> u32 {
 }
 
 fn load_from_disk(path: &PathBuf) -> PublicSettings {
-    std::fs::read_to_string(path)
+    let loaded = std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<PublicSettings>(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    sanitize(loaded)
 }
 
 fn save_to_disk(path: &PathBuf, settings: &PublicSettings) {
@@ -235,6 +237,16 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         display_mode: settings.display_mode.clone(),
         error,
     }
+}
+
+fn sync_autostart(app: &tauri::AppHandle, want_enabled: bool) {
+    let manager = app.autolaunch();
+    let currently = manager.is_enabled().unwrap_or(false);
+    let _ = match (want_enabled, currently) {
+        (true, false) => manager.enable(),
+        (false, true) => manager.disable(),
+        _ => Ok(()),
+    };
 }
 
 fn store_codex_cache(app: &tauri::AppHandle, usage: &codex::CodexUsage) {
@@ -380,7 +392,12 @@ fn dispatch_alerts(app: &tauri::AppHandle, settings: &PublicSettings, state: &Wi
 async fn fetch_claude_with_fallback(
     settings: &PublicSettings,
 ) -> Result<claude::ClaudeUsage, claude::ClaudeError> {
-    let bearer = claude::fetch_usage(settings.fetch_timeout_ms, settings.cached_org_uuid.clone()).await;
+    let bearer = claude::fetch_usage(
+        settings.fetch_timeout_ms,
+        settings.fetch_retries,
+        settings.cached_org_uuid.clone(),
+    )
+    .await;
     if let Ok(u) = bearer {
         return Ok(u);
     }
@@ -388,6 +405,7 @@ async fn fetch_claude_with_fallback(
         Some(sk) if !sk.is_empty() => {
             claude::fetch_usage_with_cookie(
                 settings.fetch_timeout_ms,
+                settings.fetch_retries,
                 sk,
                 settings.cached_org_uuid.clone(),
             )
@@ -416,6 +434,41 @@ fn persist_org_uuid(app: &tauri::AppHandle, uuid: &str) {
     }
 }
 
+fn clamp_u64(v: u64, min: u64, max: u64) -> u64 {
+    v.clamp(min, max)
+}
+
+fn sanitize_thresholds(thresholds: Vec<u32>) -> Vec<u32> {
+    let mut filtered: Vec<u32> = thresholds.into_iter().filter(|t| *t >= 1 && *t <= 100).collect();
+    filtered.sort_unstable();
+    filtered.dedup();
+    if filtered.is_empty() {
+        vec![30, 60, 80, 90]
+    } else {
+        filtered
+    }
+}
+
+fn normalize_display_mode(mode: &str) -> String {
+    match mode {
+        "remaining" | "used" => mode.to_string(),
+        _ => "used".into(),
+    }
+}
+
+fn sanitize(mut s: PublicSettings) -> PublicSettings {
+    s.refresh_interval_ms = clamp_u64(s.refresh_interval_ms, 10_000, 10 * 60 * 1000);
+    s.fetch_timeout_ms = clamp_u64(s.fetch_timeout_ms, 2_000, 60_000);
+    s.fetch_retries = s.fetch_retries.min(5);
+    s.session_scan_ttl_ms = clamp_u64(s.session_scan_ttl_ms, 30_000, 60 * 60 * 1000);
+    s.display_mode = normalize_display_mode(&s.display_mode);
+    s.usage_alert_thresholds = sanitize_thresholds(s.usage_alert_thresholds);
+    if !s.show_claude && !s.show_codex {
+        s.show_claude = true;
+    }
+    s
+}
+
 fn merge_partial(current: &PublicSettings, partial: &serde_json::Value) -> PublicSettings {
     let mut next = current.clone();
     if let Some(o) = partial.as_object() {
@@ -429,8 +482,7 @@ fn merge_partial(current: &PublicSettings, partial: &serde_json::Value) -> Publi
             next.usage_alert_thresholds = arr.iter().filter_map(|n| n.as_u64().map(|x| x as u32)).collect();
         }
     }
-    if !next.show_claude && !next.show_codex { next.show_claude = true; }
-    next
+    sanitize(next)
 }
 
 // ---- Commands ----
@@ -459,6 +511,7 @@ async fn update_settings(
         next
     };
     save_to_disk(&state.settings_path, &next);
+    sync_autostart(&app, next.open_on_startup);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_always_on_top(next.always_on_top);
         let target = target_width(&next);
@@ -596,6 +649,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let settings_path = app
                 .path()
@@ -609,6 +666,8 @@ pub fn run() {
                 let _ = win.set_size(PhysicalSize { width: target_width(&loaded), height: HEIGHT });
                 let _ = win.set_always_on_top(loaded.always_on_top);
             }
+
+            sync_autostart(app.handle(), loaded.open_on_startup);
 
             app.manage(AppState {
                 settings: Mutex::new(loaded),
