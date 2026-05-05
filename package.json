@@ -2,8 +2,7 @@
   "name": "ai-usage-widget",
   "version": "0.1.0",
   "private": true,
-  "description": "Pixel-style floating widget for monitoring Claude and Codex usage on Windows desktop.",
-  "main": "main.js",
+  "description": "Pixel-style floating widget for monitoring Claude and Codex usage on Windows desktop. Tauri 2 + Rust.",
   "license": "MIT",
   "author": "lumatic2",
   "homepage": "https://github.com/lumatic2/ai-usage-widget#readme",
@@ -15,14 +14,8 @@
     "url": "https://github.com/lumatic2/ai-usage-widget/issues"
   },
   "scripts": {
-    "start": "electron .",
-    "capture-preview": "electron ./scripts/capture-preview.js",
-    "test": "node --test",
-    "dist": "electron-packager . \"AI Usage Widget\" --platform=win32 --arch=x64 --out=release --overwrite && powershell -NoProfile -Command \"if (Test-Path 'release/AI Usage Widget-win32-x64.zip') { Remove-Item 'release/AI Usage Widget-win32-x64.zip' -Force }; Compress-Archive -Path 'release/AI Usage Widget-win32-x64/*' -DestinationPath 'release/AI Usage Widget-win32-x64.zip'\""
-  },
-  "devDependencies": {
-    "@fontsource/silkscreen": "^5.2.6",
-    "@electron/packager": "^19.1.0",
-    "electron": "^37.2.0"
+    "dev": "npm --prefix tauri-poc run tauri dev",
+    "build": "npm --prefix tauri-poc run tauri build",
+    "tauri": "npm --prefix tauri-poc run tauri"
   }
 }
