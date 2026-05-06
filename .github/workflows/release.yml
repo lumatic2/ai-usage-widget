@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: tauri-poc/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tauri-poc/src-tauri/Cargo.lock') }}
+
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: tauri-poc/src-tauri/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('tauri-poc/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Install npm deps (tauri-poc)
+        working-directory: tauri-poc
+        run: npm ci
+
+      - name: Tauri build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: tauri-poc
+          tagName: ${{ github.ref_name }}
+          releaseName: "AI Usage Widget ${{ github.ref_name }}"
+          releaseBody: |
+            Windows portable build (unsigned). SmartScreen may flag the first launch — see the README.
+
+            ## Artifacts
+            - `*-setup.exe` — NSIS installer (~3 MB)
+            - `*_x64_en-US.msi` — MSI installer (~4 MB)
+          releaseDraft: true
+          prerelease: false
