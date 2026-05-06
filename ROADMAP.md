@@ -19,7 +19,7 @@
 
 ## Milestone 2 — 가치 큰 폴리싱
 
-- [ ] GitHub Actions release 워크플로 — 태그 푸시 시 산출물 자동 첨부
+- [x] GitHub Actions release 워크플로 — 태그 푸시 시 산출물 자동 첨부 (`.github/workflows/release.yml`, NSIS+MSI on `v*` tag)
 - [ ] 첫 실행 UX 개선 — Claude 세션 없을 때 "Click to sign in" + 가이드
 - [ ] 에러 가시성 — 네트워크 실패/auth 만료 시 명시적 상태 표시
 - [ ] macOS 지원 의도 명시 — README
