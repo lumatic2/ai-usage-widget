@@ -20,7 +20,7 @@
 ## Milestone 2 — 가치 큰 폴리싱
 
 - [x] GitHub Actions release 워크플로 — 태그 푸시 시 산출물 자동 첨부 (`.github/workflows/release.yml`, NSIS+MSI on `v*` tag)
-- [ ] 첫 실행 UX 개선 — Claude 세션 없을 때 "Click to sign in" + 가이드
+- [x] 첫 실행 UX 개선 — Claude 세션 없을 때 "Click to sign in" + 가이드 (NotConfigured에도 LOGIN 노출)
 - [x] 에러 가시성 — Codex쪽도 typed error enum (`NotConfigured`/`SessionExpired`/`Other`)로 분리, OFF/expired/stale 상태 패널 표시
 - [x] macOS 지원 의도 명시 — README
 
@@ -29,7 +29,7 @@
 - [x] `BUGLOG.md` 위치 검토 — `docs/BUGLOG.md`로 이동 (공개 OK 콘텐츠지만 루트 정돈)
 - [ ] README 첫인상 개선 — 정적 PNG → 3초 GIF
 - [x] "왜 만들었는가" 한 단락
-- [ ] i18n 검토 — 라벨 영어 고정 vs 한국어 토글
+- [x] i18n 토글 (en/ko) — 첫 실행 모달 + 설정 패널 + 상태 라벨. 5-HOUR/WEEKLY/OFF/LOGIN 등 브랜드성 라벨은 영문 유지
 
 ## Milestone 4 — Tauri 마이그레이션
 
@@ -58,7 +58,7 @@
 - [x] **TLS 호환성** — `rustls-tls-native-roots` (Windows SChannel + 사내 CA)
 - [x] **자동 시작** — `tauri-plugin-autostart` (`openOnStartup` 토글 동기화)
 - [x] **Production build 검증** — `tauri-poc.exe` **13MB**, NSIS **2.9MB**, MSI **4.3MB**, cold start **664ms** (warm WV2), Rust 본체 RSS **47MB** + WebView2 자식 6개 합 ~352MB. ROADMAP 가설 "30MB RAM"은 틀렸으나 디스크 11.5× 절감은 외부 공유 마찰의 핵심
-- [ ] **(남음)** `lib/widget-core.js` 순수 함수 + 테스트 Rust 포팅 (현재는 일부 인라인 구현)
+- [x] `lib/widget-core.js` 순수 함수 + 테스트 Rust 포팅 — `widget_core.rs` 8개 단위 테스트 통과 (2026-05-07)
 - [x] 첫 실행 UX (consent + panel selection) Tauri 측에 포팅 — Milestone 1 동등 수준 (2026-05-07)
 
 ### Phase C — 정리 ✅

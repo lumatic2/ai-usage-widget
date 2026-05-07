@@ -85,6 +85,12 @@ struct PublicSettings {
     claude_session_key: Option<String>,
     #[serde(default)]
     consent_accepted: bool,
+    #[serde(default = "default_language")]
+    language: String,
+}
+
+fn default_language() -> String {
+    "en".into()
 }
 
 impl Default for PublicSettings {
@@ -106,6 +112,7 @@ impl Default for PublicSettings {
             cached_org_uuid: None,
             claude_session_key: None,
             consent_accepted: false,
+            language: default_language(),
         }
     }
 }
@@ -534,6 +541,10 @@ fn sanitize(mut s: PublicSettings) -> PublicSettings {
     s.session_scan_ttl_ms = clamp_u64(s.session_scan_ttl_ms, 30_000, 60 * 60 * 1000);
     s.display_mode = normalize_display_mode(&s.display_mode);
     s.usage_alert_thresholds = sanitize_thresholds_with_default(s.usage_alert_thresholds);
+    s.language = match s.language.as_str() {
+        "ko" => "ko".into(),
+        _ => "en".into(),
+    };
     if !s.show_claude && !s.show_codex {
         s.show_claude = true;
     }
@@ -549,6 +560,7 @@ fn merge_partial(current: &PublicSettings, partial: &serde_json::Value) -> Publi
         if let Some(v) = o.get("enableUsageAlerts").and_then(|x| x.as_bool()) { next.enable_usage_alerts = v; }
         if let Some(v) = o.get("refreshIntervalMs").and_then(|x| x.as_u64()) { next.refresh_interval_ms = v; }
         if let Some(v) = o.get("openOnStartup").and_then(|x| x.as_bool()) { next.open_on_startup = v; }
+        if let Some(v) = o.get("language").and_then(|x| x.as_str()) { next.language = v.to_string(); }
         if let Some(arr) = o.get("usageAlertThresholds").and_then(|x| x.as_array()) {
             next.usage_alert_thresholds = arr.iter().filter_map(|n| n.as_u64().map(|x| x as u32)).collect();
         }

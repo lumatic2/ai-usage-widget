@@ -45,7 +45,7 @@
             </div>
             <div class="claude-login-wrap" id="claudeLoginWrap" hidden>
               <button class="claude-login-btn no-drag" id="claudeLoginBtn" type="button">LOGIN</button>
-              <span class="claude-login-hint">Login to claude.ai to show usage</span>
+              <span class="claude-login-hint" id="claudeLoginHint" data-i18n="claudeLoginHint">Click to sign in at claude.ai</span>
             </div>
             <div class="error-banner error-banner--claude" id="claudeErrorBanner" hidden>
               <span class="error-label">CLAUDE</span>
@@ -95,70 +95,77 @@
         </div>
         <section class="settings-panel no-drag" id="settingsPanel" hidden>
           <div class="settings-row">
-            <label class="settings-label" for="displayModeSelect">Display</label>
-            <select class="settings-input" id="displayModeSelect">
-              <option value="used">USED</option>
-              <option value="left">LEFT</option>
+            <label class="settings-label" for="languageSelect" data-i18n="settings.language">Language</label>
+            <select class="settings-input" id="languageSelect">
+              <option value="en">EN</option>
+              <option value="ko">KO</option>
             </select>
           </div>
           <div class="settings-row">
-            <label class="settings-label" for="refreshSecondsInput">Refresh(s)</label>
+            <label class="settings-label" for="displayModeSelect" data-i18n="settings.display">Display</label>
+            <select class="settings-input" id="displayModeSelect">
+              <option value="used" data-i18n="settings.displayUsed">USED</option>
+              <option value="left" data-i18n="settings.displayLeft">LEFT</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="refreshSecondsInput" data-i18n="settings.refresh">Refresh(s)</label>
             <input class="settings-input" id="refreshSecondsInput" type="number" min="10" max="600" />
           </div>
           <div class="settings-row settings-row--check">
-            <label class="settings-label settings-label--check" for="alertsEnabledInput">Usage alerts</label>
+            <label class="settings-label settings-label--check" for="alertsEnabledInput" data-i18n="settings.alerts">Usage alerts</label>
             <input id="alertsEnabledInput" type="checkbox" />
           </div>
           <div class="settings-row">
-            <label class="settings-label" for="alertThresholdsInput">Thresholds</label>
+            <label class="settings-label" for="alertThresholdsInput" data-i18n="settings.thresholds">Thresholds</label>
             <input class="settings-input" id="alertThresholdsInput" type="text" placeholder="30,60,80,90" />
           </div>
           <div class="settings-row settings-row--check">
-            <label class="settings-label settings-label--check" for="openOnStartupInput">Open at login</label>
+            <label class="settings-label settings-label--check" for="openOnStartupInput" data-i18n="settings.openAtLogin">Open at login</label>
             <input id="openOnStartupInput" type="checkbox" />
           </div>
           <div class="settings-row settings-row--check">
-            <label class="settings-label settings-label--check" for="showClaudeInput">Show Claude</label>
+            <label class="settings-label settings-label--check" for="showClaudeInput" data-i18n="settings.showClaude">Show Claude</label>
             <input id="showClaudeInput" type="checkbox" />
           </div>
           <div class="settings-row settings-row--check">
-            <label class="settings-label settings-label--check" for="showCodexInput">Show Codex</label>
+            <label class="settings-label settings-label--check" for="showCodexInput" data-i18n="settings.showCodex">Show Codex</label>
             <input id="showCodexInput" type="checkbox" />
           </div>
           <div class="settings-actions">
-            <button class="settings-btn" id="settingsSaveButton" type="button">Save</button>
-            <button class="settings-btn" id="settingsRefreshButton" type="button">Refresh</button>
+            <button class="settings-btn" id="settingsSaveButton" type="button" data-i18n="settings.save">Save</button>
+            <button class="settings-btn" id="settingsRefreshButton" type="button" data-i18n="settings.refreshNow">Refresh</button>
           </div>
           <div class="settings-actions settings-actions--secondary">
-            <button class="settings-btn settings-btn--link" id="claudeLogoutButton" type="button">Claude Logout</button>
+            <button class="settings-btn settings-btn--link" id="claudeLogoutButton" type="button" data-i18n="settings.claudeLogout">Claude Logout</button>
           </div>
-          <div class="settings-note">Auto-start applies to packaged app.</div>
+          <div class="settings-note" data-i18n="settings.autostartNote">Auto-start applies to packaged app.</div>
         </section>
       </section>
     </main>
     <div class="first-run-overlay" id="firstRunOverlay" hidden>
       <div class="first-run-modal" id="firstRunModal">
         <section class="first-run-step" id="firstRunConsent">
-          <h2 class="first-run-title">AI Usage Widget — first run</h2>
-          <p class="first-run-lede">This widget reads your local AI usage data.</p>
-          <p class="first-run-detail">On every refresh it reads:</p>
+          <h2 class="first-run-title" data-i18n="firstRun.title">AI Usage Widget — first run</h2>
+          <p class="first-run-lede" data-i18n="firstRun.lede">This widget reads your local AI usage data.</p>
+          <p class="first-run-detail" data-i18n="firstRun.detailIntro">On every refresh it reads:</p>
           <ul class="first-run-list">
-            <li><code>~/.codex/auth.json</code> (Codex bearer token)</li>
-            <li>your claude.ai session cookie (after you sign in via the widget)</li>
+            <li data-i18n-html="firstRun.itemCodex"><code>~/.codex/auth.json</code> (Codex bearer token)</li>
+            <li data-i18n="firstRun.itemClaude">your claude.ai session cookie (after you sign in via the widget)</li>
           </ul>
-          <p class="first-run-detail">These tokens are used only to call the official Claude / Codex usage APIs. They are never written back to disk by this app, never sent anywhere else, and never leave your machine.</p>
+          <p class="first-run-detail" data-i18n="firstRun.detailPromise">These tokens are used only to call the official Claude / Codex usage APIs. They are never written back to disk by this app, never sent anywhere else, and never leave your machine.</p>
           <div class="first-run-actions">
-            <button class="first-run-btn first-run-btn--secondary" id="firstRunQuitBtn" type="button">Quit</button>
-            <button class="first-run-btn first-run-btn--primary" id="firstRunContinueBtn" type="button">Continue</button>
+            <button class="first-run-btn first-run-btn--secondary" id="firstRunQuitBtn" type="button" data-i18n="firstRun.quit">Quit</button>
+            <button class="first-run-btn first-run-btn--primary" id="firstRunContinueBtn" type="button" data-i18n="firstRun.continue">Continue</button>
           </div>
         </section>
         <section class="first-run-step" id="firstRunPanels" hidden>
-          <h2 class="first-run-title">Which panels?</h2>
-          <p class="first-run-detail">You can change this later from the gear icon (⚙) on the widget.</p>
+          <h2 class="first-run-title" data-i18n="firstRun.panelsTitle">Which panels?</h2>
+          <p class="first-run-detail" data-i18n="firstRun.panelsDetail">You can change this later from the gear icon (⚙) on the widget.</p>
           <div class="first-run-actions first-run-actions--stack">
-            <button class="first-run-btn first-run-btn--primary" data-panel-pick="both" type="button">Claude + Codex</button>
-            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="claude" type="button">Claude only</button>
-            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="codex" type="button">Codex only</button>
+            <button class="first-run-btn first-run-btn--primary" data-panel-pick="both" type="button" data-i18n="firstRun.bothPanels">Claude + Codex</button>
+            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="claude" type="button" data-i18n="firstRun.claudeOnly">Claude only</button>
+            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="codex" type="button" data-i18n="firstRun.codexOnly">Codex only</button>
           </div>
         </section>
       </div>

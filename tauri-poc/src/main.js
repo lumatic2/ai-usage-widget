@@ -56,6 +56,7 @@ const settingsPanel = document.getElementById('settingsPanel');
 const twoCol = document.querySelector('.two-col');
 const claudeColumn = document.querySelector('.col--claude');
 const codexColumn = document.querySelector('.col--codex');
+const languageSelect = document.getElementById('languageSelect');
 const displayModeSelect = document.getElementById('displayModeSelect');
 const refreshSecondsInput = document.getElementById('refreshSecondsInput');
 const alertsEnabledInput = document.getElementById('alertsEnabledInput');
@@ -66,6 +67,100 @@ const showCodexInput = document.getElementById('showCodexInput');
 const settingsSaveButton = document.getElementById('settingsSaveButton');
 const settingsRefreshButton = document.getElementById('settingsRefreshButton');
 const claudeLogoutButton = document.getElementById('claudeLogoutButton');
+const I18N = {
+  en: {
+    'settings.language': 'Language',
+    'settings.display': 'Display',
+    'settings.displayUsed': 'USED',
+    'settings.displayLeft': 'LEFT',
+    'settings.refresh': 'Refresh(s)',
+    'settings.alerts': 'Usage alerts',
+    'settings.thresholds': 'Thresholds',
+    'settings.openAtLogin': 'Open at login',
+    'settings.showClaude': 'Show Claude',
+    'settings.showCodex': 'Show Codex',
+    'settings.save': 'Save',
+    'settings.refreshNow': 'Refresh',
+    'settings.claudeLogout': 'Claude Logout',
+    'settings.autostartNote': 'Auto-start applies to packaged app.',
+    'firstRun.title': 'AI Usage Widget — first run',
+    'firstRun.lede': 'This widget reads your local AI usage data.',
+    'firstRun.detailIntro': 'On every refresh it reads:',
+    'firstRun.itemCodex': '<code>~/.codex/auth.json</code> (Codex bearer token)',
+    'firstRun.itemClaude': 'your claude.ai session cookie (after you sign in via the widget)',
+    'firstRun.detailPromise': 'These tokens are used only to call the official Claude / Codex usage APIs. They are never written back to disk by this app, never sent anywhere else, and never leave your machine.',
+    'firstRun.quit': 'Quit',
+    'firstRun.continue': 'Continue',
+    'firstRun.panelsTitle': 'Which panels?',
+    'firstRun.panelsDetail': 'You can change this later from the gear icon (⚙) on the widget.',
+    'firstRun.bothPanels': 'Claude + Codex',
+    'firstRun.claudeOnly': 'Claude only',
+    'firstRun.codexOnly': 'Codex only',
+    'codex.notConfigured': 'not configured',
+    'codex.runCli': 'run codex CLI',
+    'codex.expired': 'session expired',
+    'claude.notSignedIn': 'not signed in',
+    'claude.clickLoginBelow': 'click LOGIN below',
+    'claude.loginRequired': 'login required',
+    'claude.session': 'claude.ai session',
+    'claudeLoginHint': 'Click to sign in at claude.ai',
+    'reset.dashes': 'reset --',
+    'reset.fmt': (h, m) => (h > 0 ? `reset ${h}h ${m}m` : `reset ${m}m`)
+  },
+  ko: {
+    'settings.language': '언어',
+    'settings.display': '표시',
+    'settings.displayUsed': '사용',
+    'settings.displayLeft': '잔여',
+    'settings.refresh': '갱신(초)',
+    'settings.alerts': '사용량 알림',
+    'settings.thresholds': '임계값',
+    'settings.openAtLogin': '로그인 시 시작',
+    'settings.showClaude': 'Claude 표시',
+    'settings.showCodex': 'Codex 표시',
+    'settings.save': '저장',
+    'settings.refreshNow': '새로고침',
+    'settings.claudeLogout': 'Claude 로그아웃',
+    'settings.autostartNote': '자동 시작은 설치본에서 동작합니다.',
+    'firstRun.title': 'AI Usage Widget — 첫 실행',
+    'firstRun.lede': '이 위젯은 로컬 AI 사용량 데이터를 읽습니다.',
+    'firstRun.detailIntro': '갱신할 때마다 다음을 읽습니다:',
+    'firstRun.itemCodex': '<code>~/.codex/auth.json</code> (Codex bearer 토큰)',
+    'firstRun.itemClaude': 'claude.ai 세션 쿠키 (위젯에서 로그인 후 사용)',
+    'firstRun.detailPromise': '이 토큰들은 Claude / Codex 공식 사용량 API를 호출할 때만 쓰입니다. 디스크에 다시 쓰이거나 외부로 전송되지 않으며, 기기를 떠나지 않습니다.',
+    'firstRun.quit': '종료',
+    'firstRun.continue': '계속',
+    'firstRun.panelsTitle': '어떤 패널을 보여드릴까요?',
+    'firstRun.panelsDetail': '나중에 위젯의 ⚙ 아이콘에서 바꿀 수 있습니다.',
+    'firstRun.bothPanels': 'Claude + Codex',
+    'firstRun.claudeOnly': 'Claude만',
+    'firstRun.codexOnly': 'Codex만',
+    'codex.notConfigured': '미설정',
+    'codex.runCli': 'codex CLI 실행',
+    'codex.expired': '세션 만료',
+    'claude.notSignedIn': '로그인 필요',
+    'claude.clickLoginBelow': '아래 LOGIN 클릭',
+    'claude.loginRequired': '로그인 필요',
+    'claude.session': 'claude.ai 세션',
+    'claudeLoginHint': 'claude.ai에 로그인하려면 클릭',
+    'reset.dashes': '리셋 --',
+    'reset.fmt': (h, m) => (h > 0 ? `리셋 ${h}시 ${m}분` : `리셋 ${m}분`)
+  }
+};
+
+let currentLanguage = 'en';
+function t(key) {
+  return (I18N[currentLanguage] && I18N[currentLanguage][key]) || I18N.en[key] || key;
+}
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach((el) => {
+    el.innerHTML = t(el.dataset.i18nHtml);
+  });
+}
+
 let currentDisplayMode = 'used';
 let currentErrorKey = null;
 let dismissedErrorKey = null;
@@ -94,6 +189,12 @@ function enforcePanelToggleRule(changedInput) {
 }
 
 function syncSettingsInputs(settings) {
+  const lang = settings.language === 'ko' ? 'ko' : 'en';
+  if (currentLanguage !== lang) {
+    currentLanguage = lang;
+    applyI18n();
+  }
+  languageSelect.value = lang;
   displayModeSelect.value = normalizeDisplayMode(settings.displayMode);
   refreshSecondsInput.value = Math.max(10, Math.round((settings.refreshIntervalMs || 60000) / 1000));
   alertsEnabledInput.checked = Boolean(settings.enableUsageAlerts);
@@ -143,8 +244,8 @@ function renderCodexSection(state, displayMode) {
     secondaryValue.textContent = '--';
     primaryProgress.style.width = '0%';
     secondaryProgress.style.width = '0%';
-    primaryReset.textContent = 'not configured';
-    secondaryReset.textContent = 'run codex CLI';
+    primaryReset.textContent = t('codex.notConfigured');
+    secondaryReset.textContent = t('codex.runCli');
     return;
   }
 
@@ -153,8 +254,8 @@ function renderCodexSection(state, displayMode) {
     secondaryValue.textContent = '--%';
     primaryProgress.style.width = '0%';
     secondaryProgress.style.width = '0%';
-    primaryReset.textContent = 'session expired';
-    secondaryReset.textContent = 'run codex CLI';
+    primaryReset.textContent = t('codex.expired');
+    secondaryReset.textContent = t('codex.runCli');
     return;
   }
 
@@ -188,15 +289,15 @@ function renderClaudeSection(claudeState, displayMode) {
   claudeSecondaryBar.classList.toggle('pixel-bar--disabled', disableBars);
   claudePrimaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
   claudeSecondaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
-  claudeLoginWrap.hidden = !needsLogin;
+  claudeLoginWrap.hidden = !disableBars;
 
   if (!isConfigured) {
-    claudePrimaryValue.textContent = 'OFF';
-    claudeSecondaryValue.textContent = '--';
+    claudePrimaryValue.textContent = '--%';
+    claudeSecondaryValue.textContent = '--%';
     claudePrimaryProgress.style.width = '0%';
     claudeSecondaryProgress.style.width = '0%';
-    claudePrimaryReset.textContent = 'not configured';
-    claudeSecondaryReset.textContent = 'add ~/.claude';
+    claudePrimaryReset.textContent = t('claude.notSignedIn');
+    claudeSecondaryReset.textContent = t('claude.clickLoginBelow');
     claudeStatusPill.hidden = true;
     claudeErrorBanner.hidden = true;
     dismissedClaudeErrorKey = null;
@@ -209,8 +310,8 @@ function renderClaudeSection(claudeState, displayMode) {
     claudeSecondaryValue.textContent = '--%';
     claudePrimaryProgress.style.width = '0%';
     claudeSecondaryProgress.style.width = '0%';
-    claudePrimaryReset.textContent = 'login required';
-    claudeSecondaryReset.textContent = 'claude.ai session';
+    claudePrimaryReset.textContent = t('claude.loginRequired');
+    claudeSecondaryReset.textContent = t('claude.session');
     claudeStatusPill.hidden = true;
     claudeErrorBanner.hidden = true;
     dismissedClaudeErrorKey = null;
@@ -246,15 +347,12 @@ function renderClaudeSection(claudeState, displayMode) {
 
 function formatReset(totalSeconds) {
   if (typeof totalSeconds !== 'number' || !Number.isFinite(totalSeconds)) {
-    return 'reset --';
+    return t('reset.dashes');
   }
   const seconds = Math.max(0, Math.round(totalSeconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) {
-    return `reset ${hours}h ${minutes}m`;
-  }
-  return `reset ${minutes}m`;
+  return t('reset.fmt')(hours, minutes);
 }
 
 function formatPercent(value) {
@@ -338,6 +436,12 @@ firstRunPanels.querySelectorAll('[data-panel-pick]').forEach((btn) => {
 
 window.codexWidget.getInitialState().then(render);
 window.codexWidget.onState(render);
+languageSelect.addEventListener('change', () => {
+  currentLanguage = languageSelect.value === 'ko' ? 'ko' : 'en';
+  applyI18n();
+});
+
+applyI18n();
 window.codexWidget.getSettings().then((settings) => {
   syncSettingsInputs(settings);
   if (!settings.consentAccepted) {
@@ -393,6 +497,7 @@ showCodexInput.addEventListener('change', () => {
 settingsSaveButton.addEventListener('click', async () => {
   enforcePanelToggleRule(showClaudeInput.checked ? showCodexInput : showClaudeInput);
   const payload = {
+    language: languageSelect.value === 'ko' ? 'ko' : 'en',
     displayMode: normalizeDisplayMode(displayModeSelect.value),
     refreshIntervalMs: Math.max(10, Number(refreshSecondsInput.value || 60)) * 1000,
     enableUsageAlerts: Boolean(alertsEnabledInput.checked),
