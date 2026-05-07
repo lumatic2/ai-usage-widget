@@ -135,6 +135,33 @@
         </section>
       </section>
     </main>
+    <div class="first-run-overlay" id="firstRunOverlay" hidden>
+      <div class="first-run-modal" id="firstRunModal">
+        <section class="first-run-step" id="firstRunConsent">
+          <h2 class="first-run-title">AI Usage Widget — first run</h2>
+          <p class="first-run-lede">This widget reads your local AI usage data.</p>
+          <p class="first-run-detail">On every refresh it reads:</p>
+          <ul class="first-run-list">
+            <li><code>~/.codex/auth.json</code> (Codex bearer token)</li>
+            <li>your claude.ai session cookie (after you sign in via the widget)</li>
+          </ul>
+          <p class="first-run-detail">These tokens are used only to call the official Claude / Codex usage APIs. They are never written back to disk by this app, never sent anywhere else, and never leave your machine.</p>
+          <div class="first-run-actions">
+            <button class="first-run-btn first-run-btn--secondary" id="firstRunQuitBtn" type="button">Quit</button>
+            <button class="first-run-btn first-run-btn--primary" id="firstRunContinueBtn" type="button">Continue</button>
+          </div>
+        </section>
+        <section class="first-run-step" id="firstRunPanels" hidden>
+          <h2 class="first-run-title">Which panels?</h2>
+          <p class="first-run-detail">You can change this later from the gear icon (⚙) on the widget.</p>
+          <div class="first-run-actions first-run-actions--stack">
+            <button class="first-run-btn first-run-btn--primary" data-panel-pick="both" type="button">Claude + Codex</button>
+            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="claude" type="button">Claude only</button>
+            <button class="first-run-btn first-run-btn--secondary" data-panel-pick="codex" type="button">Codex only</button>
+          </div>
+        </section>
+      </div>
+    </div>
     <script src="./main.js"></script>
   </body>
   </html>

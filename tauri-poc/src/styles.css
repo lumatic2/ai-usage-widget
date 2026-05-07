@@ -571,3 +571,98 @@ body {
   font-size: 10px;
   line-height: 1.2;
 }
+
+.first-run-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  -webkit-app-region: no-drag;
+}
+
+.first-run-modal {
+  width: min(380px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: #1a1d27;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 18px 18px 14px;
+  color: var(--text);
+  font-family: Consolas, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1.45;
+  box-shadow: 0 12px 40px var(--shadow);
+}
+
+.first-run-title {
+  margin: 0 0 8px;
+  font-family: "Silkscreen", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.first-run-lede {
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+.first-run-detail {
+  margin: 0 0 8px;
+  color: #c9c2b6;
+}
+
+.first-run-list {
+  margin: 0 0 10px;
+  padding-left: 16px;
+  color: #c9c2b6;
+}
+
+.first-run-list code {
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  background: #0f1118;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.first-run-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.first-run-actions--stack {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.first-run-btn {
+  font-family: "Silkscreen", monospace;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 7px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.first-run-btn--primary {
+  background: var(--codex-blue-top);
+  color: var(--text-dark);
+  border-color: var(--codex-blue-bottom);
+}
+
+.first-run-btn--secondary {
+  background: transparent;
+  color: var(--text);
+}
+
+.first-run-btn:hover {
+  filter: brightness(1.1);
+}

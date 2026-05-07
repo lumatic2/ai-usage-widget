@@ -10,6 +10,7 @@
     refreshNow: () => invoke('refresh_now'),
     claudeLogin: () => invoke('claude_login'),
     claudeLogout: () => invoke('claude_logout'),
+    acceptConsent: (showClaude, showCodex) => invoke('accept_consent', { showClaude, showCodex }),
     hide: () => invoke('hide_widget'),
     onState: (cb) => {
       let unlistenFn = null;
@@ -259,9 +260,54 @@ function clampPercentForBar(value) {
   return Math.max(0, Math.min(Math.round(value), 100));
 }
 
+const firstRunOverlay = document.getElementById('firstRunOverlay');
+const firstRunConsent = document.getElementById('firstRunConsent');
+const firstRunPanels = document.getElementById('firstRunPanels');
+const firstRunContinueBtn = document.getElementById('firstRunContinueBtn');
+const firstRunQuitBtn = document.getElementById('firstRunQuitBtn');
+
+function showFirstRunStep(step) {
+  firstRunConsent.hidden = step !== 'consent';
+  firstRunPanels.hidden = step !== 'panels';
+}
+
+function hideFirstRun() {
+  firstRunOverlay.hidden = true;
+}
+
+firstRunQuitBtn.addEventListener('click', () => {
+  window.codexWidget.hide();
+});
+
+firstRunContinueBtn.addEventListener('click', () => {
+  showFirstRunStep('panels');
+});
+
+firstRunPanels.querySelectorAll('[data-panel-pick]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const pick = btn.dataset.panelPick;
+    const showClaude = pick !== 'codex';
+    const showCodex = pick !== 'claude';
+    btn.disabled = true;
+    try {
+      const next = await window.codexWidget.acceptConsent(showClaude, showCodex);
+      syncSettingsInputs(next);
+      hideFirstRun();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
 window.codexWidget.getInitialState().then(render);
 window.codexWidget.onState(render);
-window.codexWidget.getSettings().then(syncSettingsInputs);
+window.codexWidget.getSettings().then((settings) => {
+  syncSettingsInputs(settings);
+  if (!settings.consentAccepted) {
+    showFirstRunStep('consent');
+    firstRunOverlay.hidden = false;
+  }
+});
 
 hideButton.addEventListener('click', () => {
   window.codexWidget.hide();

@@ -73,6 +73,8 @@ struct PublicSettings {
     cached_org_uuid: Option<String>,
     #[serde(default)]
     claude_session_key: Option<String>,
+    #[serde(default)]
+    consent_accepted: bool,
 }
 
 impl Default for PublicSettings {
@@ -93,6 +95,7 @@ impl Default for PublicSettings {
             y: DEFAULT_Y,
             cached_org_uuid: None,
             claude_session_key: None,
+            consent_accepted: false,
         }
     }
 }
@@ -159,6 +162,24 @@ fn save_to_disk(path: &PathBuf, settings: &PublicSettings) {
 }
 
 async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -> WidgetState {
+    if !settings.consent_accepted {
+        return WidgetState {
+            plan_type: "CODEX".into(),
+            primary: WindowSlice::default(),
+            secondary: WindowSlice::default(),
+            claude: ClaudeState {
+                is_configured: false,
+                needs_login: false,
+                primary: WindowSlice::default(),
+                secondary: WindowSlice::default(),
+                error: None,
+                is_cached: false,
+            },
+            session_label: String::new(),
+            display_mode: settings.display_mode.clone(),
+            error: None,
+        };
+    }
     let codex_future = codex::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries);
     let claude_future = fetch_claude_with_fallback(settings);
     let (codex_result, claude_result) = futures_join(codex_future, claude_future).await;
@@ -347,7 +368,7 @@ fn check_thresholds(
 
 fn emit_usage_update(app: &tauri::AppHandle, settings: &PublicSettings, state: WidgetState) {
     dispatch_alerts(app, settings, &state);
-    let _ = app.emit("usage:update", state);
+    let _ = app.emit("widget-state", state);
 }
 
 fn dispatch_alerts(app: &tauri::AppHandle, settings: &PublicSettings, state: &WidgetState) {
@@ -547,6 +568,37 @@ async fn refresh_now(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -
 }
 
 #[tauri::command]
+async fn accept_consent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    show_claude: bool,
+    show_codex: bool,
+) -> Result<PublicSettings, String> {
+    let snapshot = {
+        let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+        guard.consent_accepted = true;
+        guard.show_claude = show_claude;
+        guard.show_codex = show_codex;
+        if !guard.show_claude && !guard.show_codex {
+            guard.show_claude = true;
+        }
+        guard.clone()
+    };
+    save_to_disk(&state.settings_path, &snapshot);
+    if let Some(win) = app.get_webview_window("main") {
+        let target = target_width(&snapshot);
+        if let Ok(size) = win.inner_size() {
+            if size.width != target {
+                let _ = win.set_size(PhysicalSize { width: target, height: HEIGHT });
+            }
+        }
+    }
+    let widget_state = build_widget_state(&app, &snapshot).await;
+    emit_usage_update(&app, &snapshot, widget_state);
+    Ok(snapshot)
+}
+
+#[tauri::command]
 async fn claude_login(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window("claude_login") {
         existing.set_focus().map_err(|e| e.to_string())?;
@@ -725,6 +777,7 @@ pub fn run() {
             update_settings,
             set_display_mode,
             refresh_now,
+            accept_consent,
             claude_login,
             claude_logout,
             hide_widget,
