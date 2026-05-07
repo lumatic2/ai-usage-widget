@@ -27,7 +27,7 @@
 ## Milestone 3 — 리포 위생 / 문서
 
 - [x] `BUGLOG.md` 위치 검토 — `docs/BUGLOG.md`로 이동 (공개 OK 콘텐츠지만 루트 정돈)
-- [ ] README 첫인상 개선 — 정적 PNG → 3초 GIF
+- [~] README 첫인상 개선 — 정적 PNG → 3초 GIF (폐기, 정적 PNG 유지)
 - [x] "왜 만들었는가" 한 단락
 - [x] i18n 토글 (en/ko) — 첫 실행 모달 + 설정 패널 + 상태 라벨. 5-HOUR/WEEKLY/OFF/LOGIN 등 브랜드성 라벨은 영문 유지
 
