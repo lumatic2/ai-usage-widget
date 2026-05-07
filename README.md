@@ -12,6 +12,10 @@ Shows for each AI tool:
 
 ![AI Usage Widget Preview](./assets/widget-screenshot.png)
 
+## Why
+
+I run Claude Code and Codex side by side every day, and the answer to "do I have headroom for one more big task?" lived in two different web tabs and a CLI command. This widget pulls both 5-hour and weekly windows into one always-visible 410/780-pixel surface, so I can glance at a corner of the monitor instead of context-switching.
+
 ## Features
 
 - Pixel-style floating widget
@@ -29,6 +33,8 @@ Shows for each AI tool:
 - For development: Node.js 24+ and Rust 1.95+ (MSVC toolchain)
 - **Codex panel**: active Codex login in `~/.codex/auth.json`
 - **Claude panel**: active claude.ai session (sign in via the widget)
+
+> **macOS / Linux**: not supported in v0.1.x. The Rust/Tauri side is mostly portable, but the Windows-only pieces (NSIS+MSI bundle, `tauri-plugin-autostart` LaunchAgent path, `%APPDATA%` config dir, native toast surface) need rework. PRs welcome.
 
 ## Quick Start (prebuilt)
 
@@ -110,7 +116,7 @@ tauri-poc/
 ├── src/                   # renderer (vanilla JS/CSS)
 │   ├── index.html
 │   ├── styles.css
-│   └── renderer.js
+│   └── main.js
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json
