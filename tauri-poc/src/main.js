@@ -26,6 +26,9 @@ const primaryProgress = document.getElementById('primaryProgress');
 const secondaryProgress = document.getElementById('secondaryProgress');
 const primaryReset = document.getElementById('primaryReset');
 const secondaryReset = document.getElementById('secondaryReset');
+const codexSection = document.getElementById('codexSection');
+const codexPrimaryBar = document.getElementById('codexPrimaryBar');
+const codexSecondaryBar = document.getElementById('codexSecondaryBar');
 const claudeSection = document.getElementById('claudeSection');
 const claudePrimaryBar = document.getElementById('claudePrimaryBar');
 const claudeSecondaryBar = document.getElementById('claudeSecondaryBar');
@@ -105,20 +108,11 @@ function syncSettingsInputs(settings) {
 function render(state) {
   const displayMode = normalizeDisplayMode(state.displayMode);
   currentDisplayMode = displayMode;
-  renderUsageSection(
-    {
-      primaryValue,
-      secondaryValue,
-      primaryProgress,
-      secondaryProgress,
-      primaryReset,
-      secondaryReset
-    },
-    state,
-    displayMode
-  );
+  renderCodexSection(state, displayMode);
 
-  const hasError = Boolean(state.error);
+  const codexState = state.codex || {};
+  const isCodexConfigured = codexState.isConfigured !== false;
+  const hasError = Boolean(state.error) && isCodexConfigured && !codexState.isCached;
   currentErrorKey = hasError ? String(state.error).trim() : null;
   const shouldShowError = hasError && currentErrorKey !== dismissedErrorKey;
   errorBanner.hidden = !shouldShowError;
@@ -129,6 +123,46 @@ function render(state) {
   }
 
   renderClaudeSection(state.claude, displayMode);
+}
+
+function renderCodexSection(state, displayMode) {
+  const codexState = state.codex || {};
+  const isConfigured = codexState.isConfigured !== false;
+  const needsLogin = Boolean(codexState.needsLogin);
+  const isCached = Boolean(codexState.isCached);
+  const disable = !isConfigured || needsLogin;
+
+  codexSection.classList.toggle('stack--disabled', disable);
+  codexPrimaryBar.classList.toggle('pixel-bar--disabled', disable);
+  codexSecondaryBar.classList.toggle('pixel-bar--disabled', disable);
+  codexPrimaryBar.classList.toggle('pixel-bar--stale', isCached);
+  codexSecondaryBar.classList.toggle('pixel-bar--stale', isCached);
+
+  if (!isConfigured) {
+    primaryValue.textContent = 'OFF';
+    secondaryValue.textContent = '--';
+    primaryProgress.style.width = '0%';
+    secondaryProgress.style.width = '0%';
+    primaryReset.textContent = 'not configured';
+    secondaryReset.textContent = 'run codex CLI';
+    return;
+  }
+
+  if (needsLogin) {
+    primaryValue.textContent = '--%';
+    secondaryValue.textContent = '--%';
+    primaryProgress.style.width = '0%';
+    secondaryProgress.style.width = '0%';
+    primaryReset.textContent = 'session expired';
+    secondaryReset.textContent = 'run codex CLI';
+    return;
+  }
+
+  renderUsageSection(
+    { primaryValue, secondaryValue, primaryProgress, secondaryProgress, primaryReset, secondaryReset },
+    state,
+    displayMode
+  );
 }
 
 function renderUsageSection(elements, state, displayMode) {
@@ -148,9 +182,12 @@ function renderClaudeSection(claudeState, displayMode) {
   const isConfigured = Boolean(state.isConfigured);
   const needsLogin = Boolean(state.needsLogin);
   const disableBars = !isConfigured || needsLogin;
+  const isCached = Boolean(state.isCached);
   claudeSection.classList.toggle('stack--disabled', disableBars);
   claudePrimaryBar.classList.toggle('pixel-bar--disabled', disableBars);
   claudeSecondaryBar.classList.toggle('pixel-bar--disabled', disableBars);
+  claudePrimaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
+  claudeSecondaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
   claudeLoginWrap.hidden = !needsLogin;
 
   if (!isConfigured) {

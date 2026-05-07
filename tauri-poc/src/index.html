@@ -56,14 +56,15 @@
           <div class="col col--codex">
             <div class="title-row title-row--codex">
               <span class="title-text">CODEX</span>
+              <span id="codexStatusPill" hidden></span>
               <div class="title-row-actions no-drag">
                 <button class="settings-toggle" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
                 <button class="hide" id="hideButton" aria-label="Hide widget">×</button>
               </div>
             </div>
-            <div class="stack">
+            <div class="stack" id="codexSection">
               <div class="pixel-card-wrap">
-                <div class="pixel-bar pixel-bar--gold">
+                <div class="pixel-bar pixel-bar--gold" id="codexPrimaryBar">
                   <div class="bar-left">
                     <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
                     <span class="bar-label">5-HOUR</span>
@@ -74,7 +75,7 @@
                 <div class="reset-tag" id="primaryResetTag"><span class="reset-tag-text" id="primaryReset">reset --</span></div>
               </div>
               <div class="pixel-card-wrap">
-                <div class="pixel-bar pixel-bar--green">
+                <div class="pixel-bar pixel-bar--green" id="codexSecondaryBar">
                   <div class="bar-left">
                     <img class="bar-icon" src="./icon-week.svg" alt="" draggable="false" />
                     <span class="bar-label">WEEKLY</span>

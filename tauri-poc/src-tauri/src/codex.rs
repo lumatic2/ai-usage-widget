@@ -1,8 +1,31 @@
 use serde::Deserialize;
+use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::WindowSlice;
+
+#[derive(Debug, Clone)]
+pub enum CodexError {
+    NotConfigured,
+    SessionExpired,
+    Other(String),
+}
+
+impl fmt::Display for CodexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CodexError::NotConfigured => {
+                write!(f, "Codex not configured. Run `codex` CLI to sign in.")
+            }
+            CodexError::SessionExpired => write!(
+                f,
+                "Codex session expired. Run `codex` CLI to sign in again."
+            ),
+            CodexError::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
 
 const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const USER_AGENT: &str = "AIUsageWidget/0.1.0 (Tauri)";
@@ -40,13 +63,14 @@ fn codex_home() -> PathBuf {
     PathBuf::from(profile).join(".codex")
 }
 
-fn load_auth() -> Result<AuthFile, String> {
+fn load_auth() -> Result<AuthFile, CodexError> {
     let path = codex_home().join("auth.json");
     if !path.exists() {
-        return Err(format!("Codex auth file not found: {}", path.display()));
+        return Err(CodexError::NotConfigured);
     }
-    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| format!("auth.json parse error: {e}"))
+    let raw = std::fs::read_to_string(&path).map_err(|e| CodexError::Other(e.to_string()))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| CodexError::Other(format!("auth.json parse error: {e}")))
 }
 
 fn parse_window(v: Option<&serde_json::Value>) -> WindowSlice {
@@ -62,7 +86,7 @@ fn parse_window(v: Option<&serde_json::Value>) -> WindowSlice {
     }
 }
 
-pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage, String> {
+pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage, CodexError> {
     let auth = load_auth()?;
     let tokens = auth.tokens.unwrap_or(AuthTokens {
         access_token: None,
@@ -71,13 +95,13 @@ pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage
     let access_token = tokens
         .access_token
         .or(auth.openai_api_key)
-        .ok_or_else(|| "Codex access token is missing from auth.json".to_string())?;
+        .ok_or(CodexError::NotConfigured)?;
     let account_id = tokens.account_id.unwrap_or_default();
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms.max(2000)))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| CodexError::Other(e.to_string()))?;
 
     let body = send_with_retries(&client, &access_token, &account_id, max_retries).await?;
 
@@ -102,8 +126,8 @@ async fn send_with_retries(
     access_token: &str,
     account_id: &str,
     max_retries: u32,
-) -> Result<serde_json::Value, String> {
-    let mut last_error: Option<String> = None;
+) -> Result<serde_json::Value, CodexError> {
+    let mut last_error: Option<CodexError> = None;
     for attempt in 0..=max_retries {
         let mut req = client
             .get(CHATGPT_USAGE_URL)
@@ -118,22 +142,23 @@ async fn send_with_retries(
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() == 401 || status.as_u16() == 403 {
-                    return Err("Codex login is expired. Please login again.".into());
+                    return Err(CodexError::SessionExpired);
                 }
                 if !status.is_success() {
                     let code = status.as_u16();
                     let retryable = code == 429 || code >= 500;
                     if retryable && attempt < max_retries {
                         sleep_backoff(attempt).await;
-                        last_error = Some(format!("Codex usage request failed: {code}"));
+                        last_error =
+                            Some(CodexError::Other(format!("Codex usage request failed: {code}")));
                         continue;
                     }
-                    return Err(format!("Codex usage request failed: {code}"));
+                    return Err(CodexError::Other(format!("Codex usage request failed: {code}")));
                 }
                 return resp
                     .json::<serde_json::Value>()
                     .await
-                    .map_err(|e| format!("Codex usage parse error: {e}"));
+                    .map_err(|e| CodexError::Other(format!("Codex usage parse error: {e}")));
             }
             Err(err) => {
                 let retryable =
@@ -145,14 +170,14 @@ async fn send_with_retries(
                 };
                 if retryable && attempt < max_retries {
                     sleep_backoff(attempt).await;
-                    last_error = Some(msg);
+                    last_error = Some(CodexError::Other(msg));
                     continue;
                 }
-                return Err(msg);
+                return Err(CodexError::Other(msg));
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| "Usage request failed".into()))
+    Err(last_error.unwrap_or_else(|| CodexError::Other("Usage request failed".into())))
 }
 
 async fn sleep_backoff(attempt: u32) {

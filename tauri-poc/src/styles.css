@@ -281,6 +281,16 @@ body {
   filter: saturate(0.45) brightness(0.82);
 }
 
+.pixel-bar--stale {
+  opacity: 0.7;
+}
+
+.pixel-bar--stale .bar-value::after {
+  content: " ·";
+  color: #ffb86c;
+  margin-left: 2px;
+}
+
 .bar-left {
   position: relative;
   z-index: 1;

@@ -43,10 +43,19 @@ struct ClaudeState {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct CodexState {
+    is_configured: bool,
+    needs_login: bool,
+    is_cached: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct WidgetState {
     plan_type: String,
     primary: WindowSlice,
     secondary: WindowSlice,
+    codex: CodexState,
     claude: ClaudeState,
     session_label: String,
     display_mode: String,
@@ -167,6 +176,11 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             plan_type: "CODEX".into(),
             primary: WindowSlice::default(),
             secondary: WindowSlice::default(),
+            codex: CodexState {
+                is_configured: false,
+                needs_login: false,
+                is_cached: false,
+            },
             claude: ClaudeState {
                 is_configured: false,
                 needs_login: false,
@@ -184,18 +198,68 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
     let claude_future = fetch_claude_with_fallback(settings);
     let (codex_result, claude_result) = futures_join(codex_future, claude_future).await;
 
-    let (plan_type, primary, secondary, error) = match codex_result {
+    let (plan_type, primary, secondary, codex, error) = match codex_result {
         Ok(u) => {
             store_codex_cache(app, &u);
-            (u.plan_type, u.primary, u.secondary, None)
+            let plan = u.plan_type.clone();
+            let p = u.primary.clone();
+            let s = u.secondary.clone();
+            (
+                plan,
+                p,
+                s,
+                CodexState {
+                    is_configured: true,
+                    needs_login: false,
+                    is_cached: false,
+                },
+                None,
+            )
         }
-        Err(e) => match read_codex_cache(app) {
-            Some(cached) => (cached.plan_type, cached.primary, cached.secondary, Some(e)),
+        Err(codex::CodexError::NotConfigured) => (
+            "CODEX".into(),
+            WindowSlice::default(),
+            WindowSlice::default(),
+            CodexState {
+                is_configured: false,
+                needs_login: false,
+                is_cached: false,
+            },
+            None,
+        ),
+        Err(codex::CodexError::SessionExpired) => (
+            "CODEX".into(),
+            WindowSlice::default(),
+            WindowSlice::default(),
+            CodexState {
+                is_configured: true,
+                needs_login: true,
+                is_cached: false,
+            },
+            Some(codex::CodexError::SessionExpired.to_string()),
+        ),
+        Err(codex::CodexError::Other(msg)) => match read_codex_cache(app) {
+            Some(cached) => (
+                cached.plan_type,
+                cached.primary,
+                cached.secondary,
+                CodexState {
+                    is_configured: true,
+                    needs_login: false,
+                    is_cached: true,
+                },
+                Some(msg),
+            ),
             None => (
                 "CODEX".into(),
                 WindowSlice::default(),
                 WindowSlice::default(),
-                Some(e),
+                CodexState {
+                    is_configured: true,
+                    needs_login: false,
+                    is_cached: false,
+                },
+                Some(msg),
             ),
         },
     };
@@ -253,6 +317,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         plan_type,
         primary,
         secondary,
+        codex,
         claude,
         session_label: load_session_label(app, settings),
         display_mode: settings.display_mode.clone(),
