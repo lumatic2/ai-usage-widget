@@ -28,7 +28,7 @@ impl fmt::Display for CodexError {
 }
 
 const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
-const USER_AGENT: &str = "AIUsageWidget/0.1.0 (Tauri)";
+const USER_AGENT: &str = "AIUsageWidget/0.1.1 (Tauri)";
 
 #[derive(Debug, Clone)]
 pub struct CodexUsage {
