@@ -13,8 +13,11 @@ target/
 # Local archive of legacy Electron sources (kept locally, not tracked)
 archive/
 
-# Project-local notes
+# Project-local notes (kept on disk, not tracked in public repo)
 CLAUDE.local.md
+CLAUDE.md
+ROADMAP.md
+docs/BUGLOG.md
 
 # OS / editor cruft
 .DS_Store
