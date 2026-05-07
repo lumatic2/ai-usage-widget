@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod session;
+mod widget_core;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -524,23 +525,7 @@ fn clamp_u64(v: u64, min: u64, max: u64) -> u64 {
     v.clamp(min, max)
 }
 
-fn sanitize_thresholds(thresholds: Vec<u32>) -> Vec<u32> {
-    let mut filtered: Vec<u32> = thresholds.into_iter().filter(|t| *t >= 1 && *t <= 100).collect();
-    filtered.sort_unstable();
-    filtered.dedup();
-    if filtered.is_empty() {
-        vec![30, 60, 80, 90]
-    } else {
-        filtered
-    }
-}
-
-fn normalize_display_mode(mode: &str) -> String {
-    match mode {
-        "remaining" | "used" => mode.to_string(),
-        _ => "used".into(),
-    }
-}
+use widget_core::{normalize_display_mode, sanitize_thresholds_with_default};
 
 fn sanitize(mut s: PublicSettings) -> PublicSettings {
     s.refresh_interval_ms = clamp_u64(s.refresh_interval_ms, 10_000, 10 * 60 * 1000);
@@ -548,7 +533,7 @@ fn sanitize(mut s: PublicSettings) -> PublicSettings {
     s.fetch_retries = s.fetch_retries.min(5);
     s.session_scan_ttl_ms = clamp_u64(s.session_scan_ttl_ms, 30_000, 60 * 60 * 1000);
     s.display_mode = normalize_display_mode(&s.display_mode);
-    s.usage_alert_thresholds = sanitize_thresholds(s.usage_alert_thresholds);
+    s.usage_alert_thresholds = sanitize_thresholds_with_default(s.usage_alert_thresholds);
     if !s.show_claude && !s.show_codex {
         s.show_claude = true;
     }
