@@ -1,6 +1,6 @@
 # Roadmap
 
-> 마지막 업데이트: 2026-05-07 (v0.1.0 cutting + first-run UX + 에러 가시성 + README polish)
+> 마지막 업데이트: 2026-05-07 (v0.1.1 published — i18n + click-to-sign-in + widget_core port + 첫 실행 dogfood 검증)
 
 외부 공유용 polish 중심. 우선순위 = 배포 신뢰도에 미치는 영향 순.
 
@@ -77,6 +77,7 @@
 
 ## 완료 이력
 
+- 2026-05-07 — **v0.1.1 published** (`c44c15e` `17add58` `a372d95` `e335ceb`). `widget_core.rs` 8 단위 테스트 + drive-by `LEFT` mode round-trip 버그 수정. en/ko i18n 토글 (첫 실행 모달 + 설정 패널 + 상태 라벨). Claude 미설정 시 LOGIN 노출 (NotConfigured에도 webview cookie 경로). LICENSE handle 갱신. NSIS 설치본 dogfood 검증: consent gate · panel pick · 위젯 fetch 모두 정상. v0.1.1 = Latest release
 - 2026-05-07 — **v0.1.0 첫 Tauri 릴리스 컷** (`b8dd016` + `ccd6ed0` + `06d4316`). 첫 실행 consent + 패널 선택 다이얼로그 Tauri 측 포팅, refresh emit 채널 버그 수정 (`usage:update` → `widget-state`), Codex 에러 타이핑 + OFF/expired/stale 패널 상태, README "Why" + macOS 의도, BUGLOG → `docs/`. 옛 Electron 시절 `v0.1.0` 태그 제거 후 재생성 (origin/main HEAD)
 - 2026-05-06 — **Tauri 마이그레이션 종료** (`eed000b` merge to main + `b2cba86` GH Actions). Phase C: Electron 파일 archive 이동, README/CLAUDE.md/package.json Tauri 재구성, release.yml workflow, GitHub repo description 갱신, 보안 재확인 (토큰 0건). production exe 12.2MB / NSIS 2.9MB / MSI 4.3MB. Milestone 4 close
 - 2026-05-05 — **Tauri Phase B 본체 완료** (`2161069` + 후속 commits, 브랜치 `tauri-migration-poc`). Codex/Claude fetch + retry + 쿠키 fallback + 세션 라벨 + last-good 캐시 + autostart + 임계값 알림. Production build 산출 검증 (exe 13MB, NSIS 2.9MB, cold start 664ms). 남은 polish: widget-core 테스트 포팅, 첫 실행 UX
