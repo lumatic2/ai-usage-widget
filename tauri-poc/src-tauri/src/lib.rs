@@ -742,7 +742,10 @@ async fn poll_claude_session_cookie(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-async fn claude_logout(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+async fn claude_logout(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
     let snapshot = {
         let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
         guard.claude_session_key = None;
@@ -750,6 +753,11 @@ async fn claude_logout(state: tauri::State<'_, AppState>) -> Result<bool, String
         guard.clone()
     };
     save_to_disk(&state.settings_path, &snapshot);
+    if let Ok(mut guard) = state.last_claude_good.lock() {
+        *guard = None;
+    }
+    let widget_state = build_widget_state(&app, &snapshot).await;
+    emit_usage_update(&app, &snapshot, widget_state);
     Ok(true)
 }
 
