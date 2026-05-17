@@ -2,6 +2,17 @@
 (function () {
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
+
+  // Wire 4-edge + 4-corner resize handles to Tauri's window-drag-resize API.
+  document.addEventListener('mousedown', (e) => {
+    const handle = e.target.closest && e.target.closest('[data-resize]');
+    if (!handle) return;
+    e.preventDefault();
+    const dir = handle.dataset.resize;
+    invoke('plugin:window|start_resize_dragging', { value: dir }).catch((err) => {
+      console.error('startResizeDragging failed', err);
+    });
+  });
   window.codexWidget = {
     getInitialState: () => invoke('get_initial_state'),
     getSettings: () => invoke('get_settings'),
@@ -12,6 +23,9 @@
     claudeLogout: () => invoke('claude_logout'),
     acceptConsent: (showClaude, showCodex) => invoke('accept_consent', { showClaude, showCodex }),
     hide: () => invoke('hide_widget'),
+    installConnector: (provider) => invoke('install_connector', { provider }),
+    uninstallConnector: (provider) => invoke('uninstall_connector', { provider }),
+    connectorStatus: () => invoke('connector_status'),
     onState: (cb) => {
       let unlistenFn = null;
       listen('widget-state', (e) => cb(e.payload)).then((u) => { unlistenFn = u; });
@@ -42,8 +56,6 @@ const claudeStatusPill = document.getElementById('claudeStatusPill');
 const claudeLoginWrap = document.getElementById('claudeLoginWrap');
 const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
-const hideButtonAlt = document.getElementById('hideButtonAlt');
-const claudeActions = document.getElementById('claudeActions');
 const errorBanner = document.getElementById('errorBanner');
 const errorText = document.getElementById('errorText');
 const errorCloseButton = document.getElementById('errorCloseButton');
@@ -51,7 +63,6 @@ const claudeErrorBanner = document.getElementById('claudeErrorBanner');
 const claudeErrorText = document.getElementById('claudeErrorText');
 const claudeErrorCloseButton = document.getElementById('claudeErrorCloseButton');
 const settingsToggleButton = document.getElementById('settingsToggleButton');
-const settingsToggleButtonAlt = document.getElementById('settingsToggleButtonAlt');
 const settingsPanel = document.getElementById('settingsPanel');
 const twoCol = document.querySelector('.two-col');
 const claudeColumn = document.querySelector('.col--claude');
@@ -59,6 +70,7 @@ const codexColumn = document.querySelector('.col--codex');
 const languageSelect = document.getElementById('languageSelect');
 const displayModeSelect = document.getElementById('displayModeSelect');
 const refreshSecondsInput = document.getElementById('refreshSecondsInput');
+const uiScaleSelect = document.getElementById('uiScaleSelect');
 const alertsEnabledInput = document.getElementById('alertsEnabledInput');
 const alertThresholdsInput = document.getElementById('alertThresholdsInput');
 const openOnStartupInput = document.getElementById('openOnStartupInput');
@@ -67,6 +79,27 @@ const showCodexInput = document.getElementById('showCodexInput');
 const settingsSaveButton = document.getElementById('settingsSaveButton');
 const settingsRefreshButton = document.getElementById('settingsRefreshButton');
 const claudeLogoutButton = document.getElementById('claudeLogoutButton');
+const agentStrip = document.getElementById('agentStrip');
+const agentChipClaude = document.getElementById('agentChipClaude');
+const agentChipCodex = document.getElementById('agentChipCodex');
+const agentChipGemini = document.getElementById('agentChipGemini');
+const agentClaudeCount = document.getElementById('agentClaudeCount');
+const agentCodexCount = document.getElementById('agentCodexCount');
+const agentGeminiCount = document.getElementById('agentGeminiCount');
+const geminiColumn = document.querySelector('.col--gemini');
+const geminiSection = document.getElementById('geminiSection');
+const geminiQuotaList = document.getElementById('geminiQuotaList');
+const geminiFallback = document.getElementById('geminiFallback');
+const geminiTodayBar = document.getElementById('geminiTodayBar');
+const geminiTodayValue = document.getElementById('geminiTodayValue');
+const geminiTodayTag = document.getElementById('geminiTodayTag');
+const geminiInstallWrap = document.getElementById('geminiInstallWrap');
+const geminiInstallBtn = document.getElementById('geminiInstallBtn');
+const geminiErrorBanner = document.getElementById('geminiErrorBanner');
+const geminiErrorText = document.getElementById('geminiErrorText');
+const geminiErrorCloseButton = document.getElementById('geminiErrorCloseButton');
+const showGeminiInput = document.getElementById('showGeminiInput');
+const geminiUninstallButton = document.getElementById('geminiUninstallButton');
 const I18N = {
   en: {
     'settings.language': 'Language',
@@ -173,17 +206,33 @@ function normalizePanelVisibility(value, fallback = true) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-function applyPanelVisibility(showClaude, showCodex) {
+function applyUiScale(scale) {
+  const clamped = Math.max(0.7, Math.min(1.5, Number(scale) || 1));
+  document.documentElement.style.zoom = String(clamped);
+}
+
+function pickClosestScaleOption(scale) {
+  const opts = [0.85, 1, 1.15, 1.3];
+  let best = opts[0];
+  let bestDiff = Math.abs(scale - best);
+  for (const o of opts) {
+    const d = Math.abs(scale - o);
+    if (d < bestDiff) { best = o; bestDiff = d; }
+  }
+  return String(best);
+}
+
+function applyPanelVisibility(showClaude, showCodex, showGemini) {
   const nextShowClaude = normalizePanelVisibility(showClaude, true);
   const nextShowCodex = normalizePanelVisibility(showCodex, true);
+  const nextShowGemini = normalizePanelVisibility(showGemini, false);
   claudeColumn.classList.toggle('col--hidden', !nextShowClaude);
   codexColumn.classList.toggle('col--hidden', !nextShowCodex);
-  // 버튼: Codex가 보이면 Codex 행, 숨겨지면 Claude 행으로
-  claudeActions.hidden = nextShowCodex;
+  if (geminiColumn) geminiColumn.classList.toggle('col--hidden', !nextShowGemini);
 }
 
 function enforcePanelToggleRule(changedInput) {
-  if (!showClaudeInput.checked && !showCodexInput.checked) {
+  if (!showClaudeInput.checked && !showCodexInput.checked && !showGeminiInput.checked) {
     changedInput.checked = true;
   }
 }
@@ -197,13 +246,17 @@ function syncSettingsInputs(settings) {
   languageSelect.value = lang;
   displayModeSelect.value = normalizeDisplayMode(settings.displayMode);
   refreshSecondsInput.value = Math.max(10, Math.round((settings.refreshIntervalMs || 60000) / 1000));
+  const scale = Number(settings.uiScale);
+  applyUiScale(Number.isFinite(scale) ? scale : 1);
+  uiScaleSelect.value = pickClosestScaleOption(Number.isFinite(scale) ? scale : 1);
   alertsEnabledInput.checked = Boolean(settings.enableUsageAlerts);
   alertThresholdsInput.value = Array.isArray(settings.usageAlertThresholds) ? settings.usageAlertThresholds.join(',') : '30,60,80,90';
   openOnStartupInput.checked = Boolean(settings.openOnStartup);
   showClaudeInput.checked = normalizePanelVisibility(settings.showClaude, true);
   showCodexInput.checked = normalizePanelVisibility(settings.showCodex, true);
+  showGeminiInput.checked = normalizePanelVisibility(settings.showGemini, false);
   enforcePanelToggleRule(showClaudeInput.checked ? showCodexInput : showClaudeInput);
-  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked, showGeminiInput.checked);
 }
 
 function render(state) {
@@ -224,6 +277,136 @@ function render(state) {
   }
 
   renderClaudeSection(state.claude, displayMode);
+  renderGeminiSection(state.gemini);
+  renderAgentStrip(state.agentPresence);
+  syncConnectorControls(state.connector);
+}
+
+function formatTokenCount(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '--';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatActiveAgo(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return 'connector idle';
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${Math.round(seconds)}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+
+function renderGeminiSection(state) {
+  const s = state || {};
+  const cloudAvailable = Boolean(s.cloudAvailable);
+  const installed = Boolean(s.isConfigured);
+  const active = Boolean(s.connectorActive);
+  const hasCloud = cloudAvailable && Array.isArray(s.quotas) && s.quotas.length > 0;
+
+  geminiSection.classList.toggle('stack--disabled', !installed && !hasCloud);
+  geminiInstallWrap.hidden = installed || hasCloud;
+
+  if (hasCloud) {
+    geminiQuotaList.hidden = false;
+    geminiFallback.hidden = true;
+    renderGeminiQuotaList(s.quotas);
+    return;
+  }
+
+  geminiQuotaList.hidden = true;
+  geminiFallback.hidden = false;
+  if (!installed) {
+    geminiTodayValue.textContent = '--';
+    geminiTodayTag.textContent = s.cloudError ? 'cloud quota unavailable' : 'hook not installed';
+  } else {
+    geminiTodayValue.textContent = formatTokenCount(s.dailyTokens);
+    geminiTodayTag.textContent = typeof s.dailyTokens === 'number'
+      ? (active ? 'live' : 'last seen earlier today')
+      : 'waiting for first turn';
+  }
+}
+
+function renderGeminiQuotaList(quotas) {
+  geminiQuotaList.innerHTML = '';
+  for (const q of quotas) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pixel-card-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'pixel-bar pixel-bar--blue';
+
+    const left = document.createElement('div');
+    left.className = 'bar-left';
+    const icon = document.createElement('img');
+    icon.className = 'bar-icon';
+    icon.src = './icon-5h.svg';
+    icon.draggable = false;
+    icon.alt = '';
+    const label = document.createElement('span');
+    label.className = 'bar-label';
+    label.textContent = q.label || q.model;
+    left.append(icon, label);
+
+    const usedPct = clampPercentForBar(q.usedPercent);
+    const remaining = 100 - usedPct;
+    const value = document.createElement('span');
+    value.className = 'bar-value';
+    value.textContent = `${remaining.toFixed(usedPct < 0.1 ? 0 : 1)}%`;
+
+    const progress = document.createElement('div');
+    progress.className = 'bar-progress';
+    const fill = document.createElement('span');
+    fill.className = 'bar-progress-fill bar-progress-fill--blue';
+    fill.style.width = `${usedPct}%`;
+    progress.appendChild(fill);
+
+    bar.append(left, value, progress);
+
+    const resetTag = document.createElement('div');
+    resetTag.className = 'reset-tag';
+    const resetText = document.createElement('span');
+    resetText.className = 'reset-tag-text';
+    resetText.textContent = q.resetAt ? `reset ${formatResetAtIso(q.resetAt)}` : '';
+    resetTag.appendChild(resetText);
+
+    wrap.append(bar, resetTag);
+    geminiQuotaList.appendChild(wrap);
+  }
+}
+
+function formatResetAtIso(iso) {
+  try {
+    const target = new Date(iso).getTime();
+    const diffSec = Math.max(0, Math.round((target - Date.now()) / 1000));
+    if (diffSec === 0) return 'now';
+    const h = Math.floor(diffSec / 3600);
+    const m = Math.floor((diffSec % 3600) / 60);
+    return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+  } catch (_) { return ''; }
+}
+
+function syncConnectorControls(summary) {
+  const providers = (summary && Array.isArray(summary.providers)) ? summary.providers : [];
+  const gemini = providers.find((p) => p.provider === 'gemini');
+  const installed = Boolean(gemini && gemini.installed);
+  geminiUninstallButton.hidden = !installed;
+}
+
+function renderAgentStrip(presence) {
+  if (!presence) {
+    agentStrip.hidden = true;
+    return;
+  }
+  agentStrip.hidden = false;
+  const set = (chip, countEl, n) => {
+    const active = Number(n) > 0;
+    chip.classList.toggle('is-active', active);
+    countEl.textContent = active && n > 1 ? `×${n}` : '';
+  };
+  set(agentChipClaude, agentClaudeCount, presence.claudeCount);
+  set(agentChipCodex, agentCodexCount, presence.codexCount);
+  set(agentChipGemini, agentGeminiCount, presence.geminiCount);
 }
 
 function renderCodexSection(state, displayMode) {
@@ -454,10 +637,6 @@ hideButton.addEventListener('click', () => {
   window.codexWidget.hide();
 });
 
-hideButtonAlt.addEventListener('click', () => {
-  window.codexWidget.hide();
-});
-
 errorCloseButton.addEventListener('click', () => {
   if (currentErrorKey) {
     dismissedErrorKey = currentErrorKey;
@@ -479,19 +658,23 @@ settingsToggleButton.addEventListener('click', () => {
   settingsPanel.hidden = !settingsPanelOpen;
 });
 
-settingsToggleButtonAlt.addEventListener('click', () => {
-  settingsPanelOpen = !settingsPanelOpen;
-  settingsPanel.hidden = !settingsPanelOpen;
-});
-
 showClaudeInput.addEventListener('change', () => {
   enforcePanelToggleRule(showClaudeInput);
-  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked, showGeminiInput.checked);
 });
 
 showCodexInput.addEventListener('change', () => {
   enforcePanelToggleRule(showCodexInput);
-  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked, showGeminiInput.checked);
+});
+
+showGeminiInput.addEventListener('change', () => {
+  enforcePanelToggleRule(showGeminiInput);
+  applyPanelVisibility(showClaudeInput.checked, showCodexInput.checked, showGeminiInput.checked);
+});
+
+uiScaleSelect.addEventListener('change', () => {
+  applyUiScale(Number(uiScaleSelect.value) || 1);
 });
 
 settingsSaveButton.addEventListener('click', async () => {
@@ -504,7 +687,9 @@ settingsSaveButton.addEventListener('click', async () => {
     usageAlertThresholds: parseThresholds(alertThresholdsInput.value),
     openOnStartup: Boolean(openOnStartupInput.checked),
     showClaude: Boolean(showClaudeInput.checked),
-    showCodex: Boolean(showCodexInput.checked)
+    showCodex: Boolean(showCodexInput.checked),
+    showGemini: Boolean(showGeminiInput.checked),
+    uiScale: Number(uiScaleSelect.value) || 1
   };
 
   settingsSaveButton.disabled = true;
@@ -550,5 +735,36 @@ claudeLogoutButton.addEventListener('click', async () => {
     await window.codexWidget.claudeLogout();
   } finally {
     claudeLogoutButton.disabled = false;
+  }
+});
+
+geminiInstallBtn.addEventListener('click', async () => {
+  geminiInstallBtn.disabled = true;
+  const originalText = geminiInstallBtn.textContent;
+  geminiInstallBtn.textContent = 'INSTALLING...';
+  try {
+    await window.codexWidget.installConnector('gemini');
+  } catch (e) {
+    geminiErrorText.textContent = String(e || 'install failed');
+    geminiErrorBanner.hidden = false;
+  } finally {
+    geminiInstallBtn.disabled = false;
+    geminiInstallBtn.textContent = originalText;
+  }
+});
+
+geminiErrorCloseButton.addEventListener('click', () => {
+  geminiErrorBanner.hidden = true;
+});
+
+geminiUninstallButton.addEventListener('click', async () => {
+  geminiUninstallButton.disabled = true;
+  try {
+    await window.codexWidget.uninstallConnector('gemini');
+  } catch (e) {
+    geminiErrorText.textContent = String(e || 'uninstall failed');
+    geminiErrorBanner.hidden = false;
+  } finally {
+    geminiUninstallButton.disabled = false;
   }
 });

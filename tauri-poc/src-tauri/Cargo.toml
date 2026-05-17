@@ -27,5 +27,8 @@ serde_json = "1"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 tokio = { version = "1", features = ["time", "macros"] }
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
+toml_edit = "0.22"
 

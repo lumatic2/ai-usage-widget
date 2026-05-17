@@ -8,16 +8,24 @@
   </head>
   <body>
     <main class="widget">
+      <div class="resize-handle resize-handle--n no-drag" data-resize="North"></div>
+      <div class="resize-handle resize-handle--s no-drag" data-resize="South"></div>
+      <div class="resize-handle resize-handle--w no-drag" data-resize="West"></div>
+      <div class="resize-handle resize-handle--e no-drag" data-resize="East"></div>
+      <div class="resize-handle resize-handle--nw no-drag" data-resize="NorthWest"></div>
+      <div class="resize-handle resize-handle--ne no-drag" data-resize="NorthEast"></div>
+      <div class="resize-handle resize-handle--sw no-drag" data-resize="SouthWest"></div>
+      <div class="resize-handle resize-handle--se no-drag" data-resize="SouthEast"></div>
       <section class="card drag" data-tauri-drag-region>
+        <div class="card-actions no-drag" id="cardActions">
+          <button class="settings-toggle" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
+          <button class="hide" id="hideButton" type="button" aria-label="Hide widget">×</button>
+        </div>
         <div class="two-col two-col--dual">
           <div class="col col--claude">
             <div class="title-row title-row--claude">
               <span class="title-text title-text--claude">CLAUDE</span>
               <span id="claudeStatusPill" hidden></span>
-              <div class="title-row-actions no-drag" id="claudeActions" hidden>
-                <button class="settings-toggle" id="settingsToggleButtonAlt" type="button" aria-label="Open settings">⚙</button>
-                <button class="hide" id="hideButtonAlt" aria-label="Hide widget">×</button>
-              </div>
             </div>
             <div class="stack stack--claude" id="claudeSection">
               <div class="pixel-card-wrap">
@@ -57,10 +65,6 @@
             <div class="title-row title-row--codex">
               <span class="title-text">CODEX</span>
               <span id="codexStatusPill" hidden></span>
-              <div class="title-row-actions no-drag">
-                <button class="settings-toggle" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
-                <button class="hide" id="hideButton" aria-label="Hide widget">×</button>
-              </div>
             </div>
             <div class="stack" id="codexSection">
               <div class="pixel-card-wrap">
@@ -92,6 +96,53 @@
               <button class="error-close no-drag" id="errorCloseButton" type="button" aria-label="Dismiss error">x</button>
             </div>
           </div>
+          <div class="col col--gemini">
+            <div class="title-row title-row--gemini">
+              <span class="title-text title-text--gemini">GEMINI</span>
+              <span id="geminiStatusPill" hidden></span>
+            </div>
+            <div class="stack stack--gemini" id="geminiSection">
+              <div id="geminiQuotaList" class="stack" hidden></div>
+              <div id="geminiFallback" class="gemini-fallback">
+                <div class="pixel-card-wrap">
+                  <div class="pixel-bar pixel-bar--blue" id="geminiTodayBar">
+                    <div class="bar-left">
+                      <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
+                      <span class="bar-label">TODAY</span>
+                    </div>
+                    <span class="bar-value" id="geminiTodayValue">--</span>
+                  </div>
+                  <div class="reset-tag"><span class="reset-tag-text" id="geminiTodayTag">connector idle</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="claude-login-wrap" id="geminiInstallWrap" hidden>
+              <button class="claude-login-btn no-drag" id="geminiInstallBtn" type="button">INSTALL HOOK</button>
+              <span class="claude-login-hint" id="geminiInstallHint">writes ~/.gemini/settings.json AfterModel hook</span>
+            </div>
+            <div class="error-banner" id="geminiErrorBanner" hidden>
+              <span class="error-label">GEMINI</span>
+              <span class="error-text" id="geminiErrorText"></span>
+              <button class="error-close no-drag" id="geminiErrorCloseButton" type="button">x</button>
+            </div>
+          </div>
+        </div>
+        <div class="agent-strip no-drag" id="agentStrip" hidden>
+          <span class="agent-chip" data-agent="claude" id="agentChipClaude">
+            <span class="agent-dot"></span>
+            <span class="agent-name">CLAUDE</span>
+            <span class="agent-count" id="agentClaudeCount"></span>
+          </span>
+          <span class="agent-chip" data-agent="codex" id="agentChipCodex">
+            <span class="agent-dot"></span>
+            <span class="agent-name">CODEX</span>
+            <span class="agent-count" id="agentCodexCount"></span>
+          </span>
+          <span class="agent-chip" data-agent="gemini" id="agentChipGemini">
+            <span class="agent-dot"></span>
+            <span class="agent-name">GEMINI</span>
+            <span class="agent-count" id="agentGeminiCount"></span>
+          </span>
         </div>
         <section class="settings-panel no-drag" id="settingsPanel" hidden>
           <div class="settings-row">
@@ -111,6 +162,15 @@
           <div class="settings-row">
             <label class="settings-label" for="refreshSecondsInput" data-i18n="settings.refresh">Refresh(s)</label>
             <input class="settings-input" id="refreshSecondsInput" type="number" min="10" max="600" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="uiScaleSelect" data-i18n="settings.uiScale">Font size</label>
+            <select class="settings-input" id="uiScaleSelect">
+              <option value="0.85">Small</option>
+              <option value="1">Medium</option>
+              <option value="1.15">Large</option>
+              <option value="1.3">X-Large</option>
+            </select>
           </div>
           <div class="settings-row settings-row--check">
             <label class="settings-label settings-label--check" for="alertsEnabledInput" data-i18n="settings.alerts">Usage alerts</label>
@@ -132,12 +192,17 @@
             <label class="settings-label settings-label--check" for="showCodexInput" data-i18n="settings.showCodex">Show Codex</label>
             <input id="showCodexInput" type="checkbox" />
           </div>
+          <div class="settings-row settings-row--check">
+            <label class="settings-label settings-label--check" for="showGeminiInput" data-i18n="settings.showGemini">Show Gemini</label>
+            <input id="showGeminiInput" type="checkbox" />
+          </div>
           <div class="settings-actions">
             <button class="settings-btn" id="settingsSaveButton" type="button" data-i18n="settings.save">Save</button>
             <button class="settings-btn" id="settingsRefreshButton" type="button" data-i18n="settings.refreshNow">Refresh</button>
           </div>
           <div class="settings-actions settings-actions--secondary">
             <button class="settings-btn settings-btn--link" id="claudeLogoutButton" type="button" data-i18n="settings.claudeLogout">Claude Logout</button>
+            <button class="settings-btn settings-btn--link" id="geminiUninstallButton" type="button" data-i18n="settings.geminiUninstall" hidden>Gemini Uninstall</button>
           </div>
           <div class="settings-note" data-i18n="settings.autostartNote">Auto-start applies to packaged app.</div>
         </section>

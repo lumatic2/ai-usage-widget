@@ -1,14 +1,19 @@
+mod agent_scan;
 mod claude;
 mod codex;
+mod connector;
+mod connector_install;
+mod gemini;
 mod session;
 mod widget_core;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const LAST_GOOD_TTL: Duration = Duration::from_secs(5 * 60);
+const CONNECTOR_PORT: u16 = 8766;
 use tauri::{
     Emitter, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
@@ -18,6 +23,7 @@ use tauri_plugin_notification::NotificationExt;
 
 const DEFAULT_WIDTH: u32 = 780;
 const SINGLE_PANEL_WIDTH: u32 = 410;
+const TRIPLE_PANEL_WIDTH: u32 = 1150;
 const HEIGHT: u32 = 320;
 const DEFAULT_X: i32 = 40;
 const DEFAULT_Y: i32 = 40;
@@ -61,6 +67,32 @@ struct WidgetState {
     session_label: String,
     display_mode: String,
     error: Option<String>,
+    agent_presence: agent_scan::AgentPresence,
+    gemini: GeminiState,
+    connector: ConnectorSummary,
+}
+
+#[derive(Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+struct GeminiState {
+    is_configured: bool,
+    connector_active: bool,
+    daily_tokens: Option<u64>,
+    last_active_seconds_ago: Option<u64>,
+    model: Option<String>,
+    cloud_available: bool,
+    plan_type: Option<String>,
+    quotas: Vec<gemini::GeminiQuotaEntry>,
+    cloud_error: Option<String>,
+    needs_login: bool,
+}
+
+#[derive(Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ConnectorSummary {
+    server_running: bool,
+    port: u16,
+    providers: Vec<connector_install::ProviderInstallStatus>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -69,6 +101,10 @@ struct PublicSettings {
     display_mode: String,
     show_claude: bool,
     show_codex: bool,
+    #[serde(default = "default_show_gemini")]
+    show_gemini: bool,
+    #[serde(default = "default_ui_scale")]
+    ui_scale: f32,
     enable_usage_alerts: bool,
     usage_alert_thresholds: Vec<u32>,
     refresh_interval_ms: u64,
@@ -79,6 +115,10 @@ struct PublicSettings {
     session_scan_ttl_ms: u64,
     x: i32,
     y: i32,
+    #[serde(default)]
+    width: Option<u32>,
+    #[serde(default)]
+    height: Option<u32>,
     #[serde(default)]
     cached_org_uuid: Option<String>,
     #[serde(default)]
@@ -93,12 +133,22 @@ fn default_language() -> String {
     "en".into()
 }
 
+fn default_show_gemini() -> bool {
+    false
+}
+
+fn default_ui_scale() -> f32 {
+    1.0
+}
+
 impl Default for PublicSettings {
     fn default() -> Self {
         PublicSettings {
             display_mode: "used".into(),
             show_claude: true,
             show_codex: true,
+            show_gemini: false,
+            ui_scale: 1.0,
             enable_usage_alerts: true,
             usage_alert_thresholds: vec![30, 60, 80, 90],
             refresh_interval_ms: 60_000,
@@ -109,6 +159,8 @@ impl Default for PublicSettings {
             session_scan_ttl_ms: 5 * 60 * 1000,
             x: DEFAULT_X,
             y: DEFAULT_Y,
+            width: None,
+            height: None,
             cached_org_uuid: None,
             claude_session_key: None,
             consent_accepted: false,
@@ -124,6 +176,7 @@ struct AppState {
     session_cache: Mutex<session::SessionCache>,
     last_codex_good: Mutex<Option<CachedCodex>>,
     last_claude_good: Mutex<Option<CachedClaude>>,
+    connector_store: Arc<connector::ConnectorStore>,
 }
 
 #[derive(Clone)]
@@ -158,7 +211,12 @@ struct WindowAlertSlot {
 }
 
 fn target_width(s: &PublicSettings) -> u32 {
-    if s.show_claude && s.show_codex { DEFAULT_WIDTH } else { SINGLE_PANEL_WIDTH }
+    let n = (s.show_claude as u32) + (s.show_codex as u32) + (s.show_gemini as u32);
+    match n {
+        3 => TRIPLE_PANEL_WIDTH,
+        2 => DEFAULT_WIDTH,
+        _ => SINGLE_PANEL_WIDTH,
+    }
 }
 
 fn load_from_disk(path: &PathBuf) -> PublicSettings {
@@ -200,11 +258,19 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             session_label: String::new(),
             display_mode: settings.display_mode.clone(),
             error: None,
+            agent_presence: agent_scan::AgentPresence::default(),
+            gemini: GeminiState {
+                cloud_available: false,
+                ..GeminiState::default()
+            },
+            connector: ConnectorSummary { server_running: true, port: CONNECTOR_PORT, providers: Vec::new() },
         };
     }
     let codex_future = codex::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries);
     let claude_future = fetch_claude_with_fallback(settings);
-    let (codex_result, claude_result) = futures_join(codex_future, claude_future).await;
+    let gemini_future = gemini::fetch_quota(settings.fetch_timeout_ms, settings.fetch_retries);
+    let (codex_result, claude_result, gemini_result) =
+        tokio::join!(codex_future, claude_future, gemini_future);
 
     let (plan_type, primary, secondary, codex, error) = match codex_result {
         Ok(u) => {
@@ -330,6 +396,75 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         session_label: load_session_label(app, settings),
         display_mode: settings.display_mode.clone(),
         error,
+        agent_presence: agent_scan::scan(),
+        gemini: build_gemini_state(app, gemini_result),
+        connector: build_connector_summary(app),
+    }
+}
+
+fn build_gemini_state(
+    app: &tauri::AppHandle,
+    cloud_result: Result<gemini::GeminiQuotaResponse, gemini::GeminiError>,
+) -> GeminiState {
+    let installed = connector_install::status_gemini(app).installed;
+    let snapshot = app
+        .try_state::<AppState>()
+        .and_then(|s| s.connector_store.get("gemini"));
+    let active_ttl = Duration::from_secs(5 * 60);
+
+    let connector_active = snapshot
+        .as_ref()
+        .is_some_and(|p| p.last_seen.elapsed() <= active_ttl);
+    let (daily_tokens, last_active_seconds_ago, model) = match snapshot {
+        Some(p) if p.last_seen.elapsed() <= active_ttl => (
+            Some(p.daily_tokens_total),
+            Some(p.last_seen.elapsed().as_secs()),
+            p.last_snapshot.model.clone(),
+        ),
+        Some(p) => (
+            (p.daily_tokens_total > 0).then_some(p.daily_tokens_total),
+            None,
+            None,
+        ),
+        None => (None, None, None),
+    };
+
+    let (cloud_available, plan_type, quotas, cloud_error, needs_login) = match cloud_result {
+        Ok(resp) => (true, resp.plan_type, resp.quotas, None, false),
+        Err(gemini::GeminiError::NotConfigured) => (false, None, Vec::new(), None, false),
+        Err(gemini::GeminiError::SessionExpired) => (
+            false,
+            None,
+            Vec::new(),
+            Some("Gemini session expired — run `gemini` CLI to refresh".into()),
+            true,
+        ),
+        Err(gemini::GeminiError::Other(msg)) => (false, None, Vec::new(), Some(msg), false),
+    };
+
+    GeminiState {
+        is_configured: installed || cloud_available,
+        connector_active,
+        daily_tokens,
+        last_active_seconds_ago,
+        model,
+        cloud_available,
+        plan_type,
+        quotas,
+        cloud_error,
+        needs_login,
+    }
+}
+
+fn build_connector_summary(app: &tauri::AppHandle) -> ConnectorSummary {
+    ConnectorSummary {
+        server_running: true,
+        port: CONNECTOR_PORT,
+        providers: vec![
+            connector_install::status_gemini(app),
+            connector_install::status_stub("claude"),
+            connector_install::status_stub("codex"),
+        ],
     }
 }
 
@@ -541,11 +676,15 @@ fn sanitize(mut s: PublicSettings) -> PublicSettings {
     s.session_scan_ttl_ms = clamp_u64(s.session_scan_ttl_ms, 30_000, 60 * 60 * 1000);
     s.display_mode = normalize_display_mode(&s.display_mode);
     s.usage_alert_thresholds = sanitize_thresholds_with_default(s.usage_alert_thresholds);
+    if !s.ui_scale.is_finite() {
+        s.ui_scale = 1.0;
+    }
+    s.ui_scale = s.ui_scale.clamp(0.7, 1.5);
     s.language = match s.language.as_str() {
         "ko" => "ko".into(),
         _ => "en".into(),
     };
-    if !s.show_claude && !s.show_codex {
+    if !s.show_claude && !s.show_codex && !s.show_gemini {
         s.show_claude = true;
     }
     s
@@ -557,6 +696,8 @@ fn merge_partial(current: &PublicSettings, partial: &serde_json::Value) -> Publi
         if let Some(v) = o.get("displayMode").and_then(|x| x.as_str()) { next.display_mode = v.to_string(); }
         if let Some(v) = o.get("showClaude").and_then(|x| x.as_bool()) { next.show_claude = v; }
         if let Some(v) = o.get("showCodex").and_then(|x| x.as_bool()) { next.show_codex = v; }
+        if let Some(v) = o.get("showGemini").and_then(|x| x.as_bool()) { next.show_gemini = v; }
+        if let Some(v) = o.get("uiScale").and_then(|x| x.as_f64()) { next.ui_scale = v as f32; }
         if let Some(v) = o.get("enableUsageAlerts").and_then(|x| x.as_bool()) { next.enable_usage_alerts = v; }
         if let Some(v) = o.get("refreshIntervalMs").and_then(|x| x.as_u64()) { next.refresh_interval_ms = v; }
         if let Some(v) = o.get("openOnStartup").and_then(|x| x.as_bool()) { next.open_on_startup = v; }
@@ -600,7 +741,7 @@ async fn update_settings(
         let target = target_width(&next);
         if let Ok(size) = win.inner_size() {
             if size.width != target {
-                let _ = win.set_size(PhysicalSize { width: target, height: HEIGHT });
+                let _ = win.set_size(PhysicalSize { width: target, height: size.height });
             }
         }
     }
@@ -651,7 +792,7 @@ async fn accept_consent(
         let target = target_width(&snapshot);
         if let Ok(size) = win.inner_size() {
             if size.width != target {
-                let _ = win.set_size(PhysicalSize { width: target, height: HEIGHT });
+                let _ = win.set_size(PhysicalSize { width: target, height: size.height });
             }
         }
     }
@@ -766,6 +907,55 @@ async fn hide_widget(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+async fn connector_status(app: tauri::AppHandle) -> ConnectorSummary {
+    build_connector_summary(&app)
+}
+
+#[tauri::command]
+async fn install_connector(
+    app: tauri::AppHandle,
+    provider: String,
+) -> Result<ConnectorSummary, String> {
+    match provider.as_str() {
+        "gemini" => {
+            connector_install::install_gemini(&app)?;
+        }
+        _ => return Err(format!("install for '{provider}' not yet supported")),
+    }
+    let summary = build_connector_summary(&app);
+    if let Some(state) = app.try_state::<AppState>() {
+        let settings = state.settings.lock().ok().map(|g| g.clone());
+        if let Some(s) = settings {
+            let widget_state = build_widget_state(&app, &s).await;
+            emit_usage_update(&app, &s, widget_state);
+        }
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn uninstall_connector(
+    app: tauri::AppHandle,
+    provider: String,
+) -> Result<ConnectorSummary, String> {
+    match provider.as_str() {
+        "gemini" => {
+            connector_install::uninstall_gemini(&app)?;
+        }
+        _ => return Err(format!("uninstall for '{provider}' not yet supported")),
+    }
+    let summary = build_connector_summary(&app);
+    if let Some(state) = app.try_state::<AppState>() {
+        let settings = state.settings.lock().ok().map(|g| g.clone());
+        if let Some(s) = settings {
+            let widget_state = build_widget_state(&app, &s).await;
+            emit_usage_update(&app, &s, widget_state);
+        }
+    }
+    Ok(summary)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -785,12 +975,19 @@ pub fn run() {
 
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_position(PhysicalPosition { x: loaded.x, y: loaded.y });
-                let _ = win.set_size(PhysicalSize { width: target_width(&loaded), height: HEIGHT });
+                let width = loaded.width.unwrap_or_else(|| target_width(&loaded));
+                let height = loaded.height.unwrap_or(HEIGHT);
+                let _ = win.set_size(PhysicalSize { width, height });
                 let _ = win.set_always_on_top(loaded.always_on_top);
             }
 
             sync_autostart(app.handle(), loaded.open_on_startup);
 
+            let connector_daily_path = settings_path
+                .parent()
+                .map(|p| p.join("connector_daily.json"))
+                .unwrap_or_else(|| PathBuf::from("connector_daily.json"));
+            let connector_store = Arc::new(connector::ConnectorStore::new(connector_daily_path));
             app.manage(AppState {
                 settings: Mutex::new(loaded),
                 settings_path,
@@ -798,6 +995,13 @@ pub fn run() {
                 session_cache: Mutex::new(session::SessionCache::default()),
                 last_codex_good: Mutex::new(None),
                 last_claude_good: Mutex::new(None),
+                connector_store: connector_store.clone(),
+            });
+
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = connector::start_server(CONNECTOR_PORT, connector_store).await {
+                    eprintln!("connector server failed to start on 127.0.0.1:{CONNECTOR_PORT}: {e}");
+                }
             });
 
             let app_handle = app.handle().clone();
@@ -827,18 +1031,35 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() != "main" { return; }
-            if let WindowEvent::Moved(pos) = event {
-                if let Some(state) = window.app_handle().try_state::<AppState>() {
-                    let mut snapshot = None;
-                    if let Ok(mut guard) = state.settings.lock() {
-                        guard.x = pos.x;
-                        guard.y = pos.y;
-                        snapshot = Some(guard.clone());
-                    }
-                    if let Some(s) = snapshot {
-                        save_to_disk(&state.settings_path, &s);
+            match event {
+                WindowEvent::Moved(pos) => {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        let mut snapshot = None;
+                        if let Ok(mut guard) = state.settings.lock() {
+                            guard.x = pos.x;
+                            guard.y = pos.y;
+                            snapshot = Some(guard.clone());
+                        }
+                        if let Some(s) = snapshot {
+                            save_to_disk(&state.settings_path, &s);
+                        }
                     }
                 }
+                WindowEvent::Resized(size) => {
+                    if size.width == 0 || size.height == 0 { return; }
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        let mut snapshot = None;
+                        if let Ok(mut guard) = state.settings.lock() {
+                            guard.width = Some(size.width);
+                            guard.height = Some(size.height);
+                            snapshot = Some(guard.clone());
+                        }
+                        if let Some(s) = snapshot {
+                            save_to_disk(&state.settings_path, &s);
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -851,6 +1072,9 @@ pub fn run() {
             claude_login,
             claude_logout,
             hide_widget,
+            connector_status,
+            install_connector,
+            uninstall_connector,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
