@@ -228,8 +228,27 @@ body {
 .desk__provider--codex  { color: #0891b2; }
 .desk:hover { transform: translateY(-1px); }
 .desk--selected { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.18); }
-.desk--empty { background: #f0f3fa; border-style: dashed; border-color: #d3d9e6; }
+.desk--empty {
+  background: #f0f3fa;
+  border-style: dashed;
+  border-color: #d3d9e6;
+  border-left-width: 2px;
+}
 .desk--empty .desk__name { color: #99a2b6; }
+.desk--placeholder {
+  cursor: default;
+  opacity: 0.7;
+}
+.desk--placeholder:hover { transform: none; }
+.desk__name--placeholder {
+  text-align: center;
+  font-weight: 500;
+  font-style: italic;
+  color: #b0b8c8;
+}
+.desk--empty .desk__art {
+  background: repeating-linear-gradient(45deg, #ebeef5 0 6px, #e3e7f0 6px 12px);
+}
 
 .desk__badge {
   position: absolute;

@@ -90,13 +90,23 @@ function branchDisplay(s) {
   return `<div class="desk__branch">${escapeHtml(s.gitBranch)}${worktree}</div>`;
 }
 
+const OFFICE_CAPACITY = 6;
+
+function buildEmptyDesk() {
+  const desk = document.createElement('div');
+  desk.className = 'desk desk--empty desk--placeholder';
+  desk.innerHTML = `
+    <div class="desk__badge desk__badge--empty">Empty</div>
+    <div class="desk__art"><img src="./assets/desks/desk-empty.svg" alt="empty"></div>
+    <div class="desk__name desk__name--placeholder">— vacant —</div>
+  `;
+  return desk;
+}
+
 function renderDesks(sessions) {
   deskGrid.innerHTML = '';
   if (sessions.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'desk desk--empty';
-    empty.innerHTML = `<div class="desk__badge desk__badge--empty">Empty</div><div class="desk__name">No active sessions in last 24h</div>`;
-    deskGrid.appendChild(empty);
+    for (let i = 0; i < OFFICE_CAPACITY; i++) deskGrid.appendChild(buildEmptyDesk());
     return;
   }
 
@@ -138,6 +148,13 @@ function renderDesks(sessions) {
   for (const s of standalone) {
     deskGrid.appendChild(buildDeskEl(s));
   }
+
+  // Fill up to OFFICE_CAPACITY with empty placeholders so a sparse office still looks
+  // like a room rather than a list. Rooms (grouped projects) count as 1 occupant each
+  // since they visually expand on their own.
+  const occupied = standalone.length + multi.length;
+  const needed = Math.max(0, OFFICE_CAPACITY - occupied);
+  for (let i = 0; i < needed; i++) deskGrid.appendChild(buildEmptyDesk());
 }
 
 function buildDeskEl(s) {
