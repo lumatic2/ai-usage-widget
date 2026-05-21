@@ -19,6 +19,17 @@ try {
 exit 0
 "#;
 
+const AGENT_OFFICE_SCRIPT: &str = r#"# ai-usage-widget agent-office hook v1
+param([Parameter(Mandatory)][string]$Event)
+$body = [Console]::In.ReadToEnd()
+try {
+  Invoke-WebRequest -Uri "http://127.0.0.1:8766/v1/agent-office/event/$Event" `
+    -Method POST -ContentType "application/json" -Body $body `
+    -TimeoutSec 2 -UseBasicParsing | Out-Null
+} catch { }
+exit 0
+"#;
+
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInstallStatus {
@@ -32,6 +43,42 @@ pub struct ProviderInstallStatus {
 fn gemini_settings_path() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
     Ok(PathBuf::from(home).join(".gemini").join("settings.json"))
+}
+
+fn claude_settings_path() -> Result<PathBuf, String> {
+    let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
+    Ok(PathBuf::from(home).join(".claude").join("settings.json"))
+}
+
+fn agent_office_script_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(dir.join("connector").join("agent-office.ps1"))
+}
+
+fn ensure_agent_office_script(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = agent_office_script_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let need_write = match fs::read_to_string(&path) {
+        Ok(existing) => existing != AGENT_OFFICE_SCRIPT,
+        Err(_) => true,
+    };
+    if need_write {
+        fs::write(&path, AGENT_OFFICE_SCRIPT).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
+}
+
+fn build_office_hook_command(script_path: &PathBuf, event: &str) -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\" {}",
+        script_path.display(),
+        event
+    )
 }
 
 fn hook_script_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -195,6 +242,149 @@ pub fn uninstall_gemini(app: &AppHandle) -> Result<ProviderInstallStatus, String
     gemini_strip_existing(&mut v);
     write_settings(&path, &v)?;
     Ok(status_gemini(app))
+}
+
+// ---- Claude (agent-office Stop / SessionEnd hooks) ----
+
+const CLAUDE_HOOK_EVENTS: &[&str] = &["Stop", "SessionEnd", "SubagentStop"];
+
+fn claude_event_payload(event: &str) -> &'static str {
+    match event {
+        "Stop" => "stop",
+        "SessionEnd" => "session_end",
+        "SubagentStop" => "subagent_stop",
+        _ => "stop",
+    }
+}
+
+fn claude_is_installed(v: &Value) -> bool {
+    CLAUDE_HOOK_EVENTS.iter().all(|evt| {
+        v.pointer(&format!("/hooks/{evt}"))
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter().any(|block| {
+                    block
+                        .get("hooks")
+                        .and_then(|h| h.as_array())
+                        .map(|hooks| {
+                            hooks
+                                .iter()
+                                .any(|h| h.get("name").and_then(|n| n.as_str()) == Some(HOOK_NAME))
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn claude_strip_existing(v: &mut Value) {
+    for evt in CLAUDE_HOOK_EVENTS {
+        let Some(arr) = v
+            .pointer_mut(&format!("/hooks/{evt}"))
+            .and_then(|x| x.as_array_mut())
+        else {
+            continue;
+        };
+        arr.retain(|block| {
+            let hooks = block.get("hooks").and_then(|h| h.as_array());
+            match hooks {
+                Some(hs) => !hs
+                    .iter()
+                    .any(|h| h.get("name").and_then(|n| n.as_str()) == Some(HOOK_NAME)),
+                None => true,
+            }
+        });
+        // Drop blocks that ended up with empty hook lists.
+        arr.retain(|block| {
+            block
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|h| !h.is_empty())
+                .unwrap_or(false)
+        });
+    }
+}
+
+pub fn status_claude(_app: &AppHandle) -> ProviderInstallStatus {
+    let path = match claude_settings_path() {
+        Ok(p) => p,
+        Err(e) => {
+            return ProviderInstallStatus {
+                provider: "claude".into(),
+                error: Some(e),
+                ..Default::default()
+            };
+        }
+    };
+    let v = read_settings(&path).unwrap_or(json!({}));
+    let installed = claude_is_installed(&v);
+    ProviderInstallStatus {
+        provider: "claude".into(),
+        installed,
+        settings_path: path.display().to_string(),
+        connector_version: if installed {
+            Some(CONNECTOR_VERSION.into())
+        } else {
+            None
+        },
+        error: None,
+    }
+}
+
+pub fn install_claude(app: &AppHandle) -> Result<ProviderInstallStatus, String> {
+    let script = ensure_agent_office_script(app)?;
+    let path = claude_settings_path()?;
+    let mut v = read_settings(&path)?;
+
+    if !v.is_object() {
+        v = json!({});
+    }
+    {
+        let obj = v.as_object_mut().unwrap();
+        if !obj.contains_key("hooks") {
+            obj.insert("hooks".into(), json!({}));
+        }
+    }
+
+    claude_strip_existing(&mut v);
+
+    for evt in CLAUDE_HOOK_EVENTS {
+        {
+            let hooks = v.get_mut("hooks").unwrap();
+            if !hooks.is_object() {
+                *hooks = json!({});
+            }
+            let hooks_obj = hooks.as_object_mut().unwrap();
+            if !hooks_obj.contains_key(*evt) {
+                hooks_obj.insert((*evt).into(), json!([]));
+            }
+        }
+        let cmd = build_office_hook_command(&script, claude_event_payload(evt));
+        let entry = json!({
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "name": HOOK_NAME,
+                "command": cmd,
+            }]
+        });
+        v.pointer_mut(&format!("/hooks/{evt}"))
+            .and_then(|x| x.as_array_mut())
+            .ok_or_else(|| format!("hooks.{evt} not an array"))?
+            .push(entry);
+    }
+
+    write_settings(&path, &v)?;
+    Ok(status_claude(app))
+}
+
+pub fn uninstall_claude(app: &AppHandle) -> Result<ProviderInstallStatus, String> {
+    let path = claude_settings_path()?;
+    let mut v = read_settings(&path)?;
+    claude_strip_existing(&mut v);
+    write_settings(&path, &v)?;
+    Ok(status_claude(app))
 }
 
 pub fn status_stub(provider: &str) -> ProviderInstallStatus {

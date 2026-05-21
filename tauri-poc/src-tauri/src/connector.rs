@@ -53,8 +53,17 @@ struct DailyEntry {
     daily_tokens: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct AgentEvent {
+    pub event: String,                // "stop" | "session_end"
+    pub session_id: String,
+    pub cwd: Option<String>,
+    pub at: DateTime<Utc>,
+}
+
 pub struct ConnectorStore {
     providers: Mutex<HashMap<String, ProviderState>>,
+    agent_events: Mutex<HashMap<String, AgentEvent>>, // keyed by session_id
     persistence_path: PathBuf,
 }
 
@@ -63,12 +72,23 @@ impl ConnectorStore {
         let providers = load_persisted(&persistence_path);
         Self {
             providers: Mutex::new(providers),
+            agent_events: Mutex::new(HashMap::new()),
             persistence_path,
         }
     }
 
     pub fn get(&self, provider: &str) -> Option<ProviderState> {
         self.providers.lock().ok()?.get(provider).cloned()
+    }
+
+    pub fn get_agent_event(&self, session_id: &str) -> Option<AgentEvent> {
+        self.agent_events.lock().ok()?.get(session_id).cloned()
+    }
+
+    pub fn record_agent_event(&self, event: AgentEvent) {
+        if let Ok(mut g) = self.agent_events.lock() {
+            g.insert(event.session_id.clone(), event);
+        }
     }
 
     fn insert(&self, provider: &str, snapshot: ConnectorSnapshot) {
@@ -171,9 +191,32 @@ pub async fn start_server(port: u16, store: Arc<ConnectorStore>) -> std::io::Res
     let app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/usage/:provider", post(post_usage))
+        .route("/v1/agent-office/event/:event", post(post_agent_event))
         .with_state(store);
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;
     axum::serve(listener, app).await
+}
+
+async fn post_agent_event(
+    State(store): State<Arc<ConnectorStore>>,
+    Path(event): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, StatusCode> {
+    if !matches!(event.as_str(), "stop" | "session_end" | "subagent_stop") {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let session_id = pick_str(&body, &["session_id", "sessionId"]).unwrap_or_default();
+    if session_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let cwd = pick_str(&body, &["cwd"]);
+    store.record_agent_event(AgentEvent {
+        event,
+        session_id,
+        cwd,
+        at: Utc::now(),
+    });
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn health() -> Json<Value> {

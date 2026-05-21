@@ -26,6 +26,7 @@
     installConnector: (provider) => invoke('install_connector', { provider }),
     uninstallConnector: (provider) => invoke('uninstall_connector', { provider }),
     connectorStatus: () => invoke('connector_status'),
+    openAgentOffice: () => invoke('open_agent_office'),
     onState: (cb) => {
       let unlistenFn = null;
       listen('widget-state', (e) => cb(e.payload)).then((u) => { unlistenFn = u; });
@@ -63,6 +64,12 @@ const claudeErrorBanner = document.getElementById('claudeErrorBanner');
 const claudeErrorText = document.getElementById('claudeErrorText');
 const claudeErrorCloseButton = document.getElementById('claudeErrorCloseButton');
 const settingsToggleButton = document.getElementById('settingsToggleButton');
+const agentOfficeButton = document.getElementById('agentOfficeButton');
+if (agentOfficeButton) {
+  agentOfficeButton.addEventListener('click', () => {
+    window.codexWidget.openAgentOffice().catch((err) => console.error('openAgentOffice failed', err));
+  });
+}
 const settingsPanel = document.getElementById('settingsPanel');
 const twoCol = document.querySelector('.two-col');
 const claudeColumn = document.querySelector('.col--claude');

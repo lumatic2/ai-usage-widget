@@ -28,3 +28,6 @@ Thumbs.db
 
 # Personal shortcuts (contain hardcoded local paths)
 create_shortcut.ps1
+
+# Claude Code local state
+.claude/

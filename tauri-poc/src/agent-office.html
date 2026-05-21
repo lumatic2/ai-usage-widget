@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Office</title>
+    <link rel="stylesheet" href="./agent-office.css" />
+  </head>
+  <body>
+    <main class="office">
+      <header class="office__header" data-tauri-drag-region>
+        <div class="office__brand">
+          <div class="office__eyebrow">SESSIONS</div>
+          <div class="office__title">Agent Office</div>
+        </div>
+        <div class="office__chips">
+          <div class="chip"><span class="chip__label">Agents</span><span class="chip__value" id="chipAgents">0</span></div>
+          <div class="chip"><span class="chip__label">Working</span><span class="chip__value" id="chipWorking">0</span></div>
+          <div class="chip"><span class="chip__label">Idle</span><span class="chip__value" id="chipIdle">0</span></div>
+          <div class="chip"><span class="chip__label">Done</span><span class="chip__value" id="chipDone">0</span></div>
+        </div>
+        <div class="office__actions">
+          <button id="refreshButton" type="button" title="Refresh">↻</button>
+          <button id="closeButton" type="button" title="Close">×</button>
+        </div>
+      </header>
+
+      <div class="office__banner" id="hookBanner" hidden>
+        <span class="office__banner-text">
+          Stop hook 미설치 — Claude가 작업을 끝내도 자동으로 "DONE"으로 잡히지 않아요.
+        </span>
+        <button id="installHookButton" type="button">Stop hook 설치</button>
+        <button id="dismissBannerButton" type="button" class="office__banner-x" title="dismiss">×</button>
+      </div>
+
+      <section class="office__body">
+        <div class="grid" id="deskGrid"></div>
+
+        <aside class="sidepanel">
+          <div class="panel">
+            <div class="panel__eyebrow">SELECTED AGENT</div>
+            <div class="panel__title" id="selectedName">—</div>
+            <div class="panel__sub" id="selectedSub">No session selected</div>
+            <div class="panel__row">
+              <span class="panel__label">현재 작업</span>
+              <div class="panel__prompt" id="selectedPrompt">—</div>
+            </div>
+            <div class="panel__row">
+              <span class="panel__label">git</span>
+              <span class="panel__value" id="selectedBranch">—</span>
+            </div>
+            <div class="panel__row">
+              <span class="panel__label">유휴</span>
+              <span class="panel__value" id="selectedIdle">—</span>
+            </div>
+            <div class="panel__row">
+              <span class="panel__label">turns</span>
+              <span class="panel__value" id="selectedTurns">—</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel__eyebrow">ACTIVITY</div>
+            <div class="panel__title">작업 로그</div>
+            <ol class="log" id="activityLog"></ol>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="./agent-office.js"></script>
+  </body>
+</html>

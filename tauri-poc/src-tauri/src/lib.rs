@@ -1,4 +1,6 @@
+mod agent_office;
 mod agent_scan;
+mod focus_session;
 mod claude;
 mod codex;
 mod connector;
@@ -462,7 +464,7 @@ fn build_connector_summary(app: &tauri::AppHandle) -> ConnectorSummary {
         port: CONNECTOR_PORT,
         providers: vec![
             connector_install::status_gemini(app),
-            connector_install::status_stub("claude"),
+            connector_install::status_claude(app),
             connector_install::status_stub("codex"),
         ],
     }
@@ -908,6 +910,58 @@ async fn hide_widget(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+async fn get_agent_office_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<agent_office::AgentOfficeState, String> {
+    let store = state.connector_store.clone();
+    tokio::task::spawn_blocking(move || agent_office::scan(Some(store)))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn focus_session_window(cwd: String) -> Result<bool, String> {
+    let cwd_clone = cwd.clone();
+    tokio::task::spawn_blocking(move || focus_session::focus_for_cwd(&cwd_clone))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn close_agent_office(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("agent_office") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_agent_office(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window("agent_office") {
+        existing.show().map_err(|e| e.to_string())?;
+        existing.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        "agent_office",
+        WebviewUrl::App("agent-office.html".into()),
+    )
+    .title("Agent Office")
+    .inner_size(1280.0, 720.0)
+    .min_inner_size(800.0, 480.0)
+    .decorations(false)
+    .transparent(true)
+    .resizable(true)
+    .shadow(false)
+    .skip_taskbar(false)
+    .always_on_top(false)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn connector_status(app: tauri::AppHandle) -> ConnectorSummary {
     build_connector_summary(&app)
 }
@@ -921,17 +975,23 @@ async fn install_connector(
         "gemini" => {
             connector_install::install_gemini(&app)?;
         }
+        "claude" => {
+            connector_install::install_claude(&app)?;
+        }
         _ => return Err(format!("install for '{provider}' not yet supported")),
     }
     let summary = build_connector_summary(&app);
-    if let Some(state) = app.try_state::<AppState>() {
-        let settings = state.settings.lock().ok().map(|g| g.clone());
-        if let Some(s) = settings {
-            let widget_state = build_widget_state(&app, &s).await;
-            emit_usage_update(&app, &s, widget_state);
-        }
-    }
+    spawn_widget_refresh(app.clone());
     Ok(summary)
+}
+
+fn spawn_widget_refresh(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = app.try_state::<AppState>() else { return };
+        let Some(settings) = state.settings.lock().ok().map(|g| g.clone()) else { return };
+        let widget_state = build_widget_state(&app, &settings).await;
+        emit_usage_update(&app, &settings, widget_state);
+    });
 }
 
 #[tauri::command]
@@ -943,16 +1003,13 @@ async fn uninstall_connector(
         "gemini" => {
             connector_install::uninstall_gemini(&app)?;
         }
+        "claude" => {
+            connector_install::uninstall_claude(&app)?;
+        }
         _ => return Err(format!("uninstall for '{provider}' not yet supported")),
     }
     let summary = build_connector_summary(&app);
-    if let Some(state) = app.try_state::<AppState>() {
-        let settings = state.settings.lock().ok().map(|g| g.clone());
-        if let Some(s) = settings {
-            let widget_state = build_widget_state(&app, &s).await;
-            emit_usage_update(&app, &s, widget_state);
-        }
-    }
+    spawn_widget_refresh(app.clone());
     Ok(summary)
 }
 
@@ -1001,6 +1058,28 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = connector::start_server(CONNECTOR_PORT, connector_store).await {
                     eprintln!("connector server failed to start on 127.0.0.1:{CONNECTOR_PORT}: {e}");
+                }
+            });
+
+            let office_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(3000)).await;
+                    let Some(window) = office_handle.get_webview_window("agent_office") else {
+                        continue;
+                    };
+                    if !window.is_visible().unwrap_or(false) {
+                        continue;
+                    }
+                    let store = office_handle
+                        .try_state::<AppState>()
+                        .map(|st| st.connector_store.clone());
+                    let state = tokio::task::spawn_blocking(move || agent_office::scan(store))
+                        .await
+                        .ok();
+                    if let Some(s) = state {
+                        let _ = window.emit("agent-office:update", s);
+                    }
                 }
             });
 
@@ -1072,6 +1151,10 @@ pub fn run() {
             claude_login,
             claude_logout,
             hide_widget,
+            get_agent_office_state,
+            open_agent_office,
+            close_agent_office,
+            focus_session_window,
             connector_status,
             install_connector,
             uninstall_connector,
