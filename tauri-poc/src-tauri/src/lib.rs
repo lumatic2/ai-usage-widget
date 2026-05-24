@@ -6,6 +6,7 @@ mod codex;
 mod connector;
 mod connector_install;
 mod gemini;
+mod secure;
 mod session;
 mod widget_core;
 
@@ -222,10 +223,16 @@ fn target_width(s: &PublicSettings) -> u32 {
 }
 
 fn load_from_disk(path: &PathBuf) -> PublicSettings {
-    let loaded = std::fs::read_to_string(path)
+    let mut loaded: PublicSettings = std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<PublicSettings>(&raw).ok())
         .unwrap_or_default();
+    // Decrypt at-rest sessionKey if it was protected on a previous save.
+    if let Some(sk) = loaded.claude_session_key.as_deref() {
+        if secure::is_protected(sk) {
+            loaded.claude_session_key = secure::unprotect(sk);
+        }
+    }
     sanitize(loaded)
 }
 
@@ -233,7 +240,16 @@ fn save_to_disk(path: &PathBuf, settings: &PublicSettings) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(json) = serde_json::to_string_pretty(settings) {
+    // Encrypt sessionKey at rest. In-memory copy stays plaintext for the running session.
+    let mut to_persist = settings.clone();
+    if let Some(sk) = to_persist.claude_session_key.as_deref() {
+        if !sk.is_empty() && !secure::is_protected(sk) {
+            if let Some(enc) = secure::protect(sk) {
+                to_persist.claude_session_key = Some(enc);
+            }
+        }
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&to_persist) {
         let _ = std::fs::write(path, json);
     }
 }

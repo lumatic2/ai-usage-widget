@@ -83,6 +83,7 @@ body {
 }
 .office__actions button:hover { background: #f0f3fa; }
 
+.office__banner[hidden] { display: none !important; }
 .office__banner {
   display: flex;
   align-items: center;

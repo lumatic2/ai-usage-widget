@@ -19,10 +19,18 @@ try {
 exit 0
 "#;
 
-const AGENT_OFFICE_SCRIPT: &str = r#"# ai-usage-widget agent-office hook v1
+const AGENT_OFFICE_SCRIPT: &str = r#"# ai-usage-widget agent-office hook v2
 param([Parameter(Mandatory)][string]$Event)
 $body = [Console]::In.ReadToEnd()
 try {
+  if ($Event -eq 'session_start') {
+    $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+    try {
+      $obj = $body | ConvertFrom-Json -ErrorAction Stop
+      $obj | Add-Member -NotePropertyName 'parentPid' -NotePropertyValue $parent -Force
+      $body = $obj | ConvertTo-Json -Compress -Depth 8
+    } catch { }
+  }
   Invoke-WebRequest -Uri "http://127.0.0.1:8766/v1/agent-office/event/$Event" `
     -Method POST -ContentType "application/json" -Body $body `
     -TimeoutSec 2 -UseBasicParsing | Out-Null
@@ -246,10 +254,11 @@ pub fn uninstall_gemini(app: &AppHandle) -> Result<ProviderInstallStatus, String
 
 // ---- Claude (agent-office Stop / SessionEnd hooks) ----
 
-const CLAUDE_HOOK_EVENTS: &[&str] = &["Stop", "SessionEnd", "SubagentStop"];
+const CLAUDE_HOOK_EVENTS: &[&str] = &["SessionStart", "Stop", "SessionEnd", "SubagentStop"];
 
 fn claude_event_payload(event: &str) -> &'static str {
     match event {
+        "SessionStart" => "session_start",
         "Stop" => "stop",
         "SessionEnd" => "session_end",
         "SubagentStop" => "subagent_stop",

@@ -59,12 +59,11 @@ function hashStr(s) {
 }
 
 function deskArtSrc(session) {
-  if (session.status === 'done') return './assets/desks/desk-done.svg';
-  if (session.status === 'idle') return './assets/desks/desk-idle.svg';
   if (session.status === 'working') {
     const idx = hashStr(session.sessionId || '') % WORKING_VARIANTS.length;
     return WORKING_VARIANTS[idx];
   }
+  // idle / done / anything else → empty desk (no character)
   return './assets/desks/desk-empty.svg';
 }
 
@@ -90,25 +89,9 @@ function branchDisplay(s) {
   return `<div class="desk__branch">${escapeHtml(s.gitBranch)}${worktree}</div>`;
 }
 
-const OFFICE_CAPACITY = 6;
-
-function buildEmptyDesk() {
-  const desk = document.createElement('div');
-  desk.className = 'desk desk--empty desk--placeholder';
-  desk.innerHTML = `
-    <div class="desk__badge desk__badge--empty">Empty</div>
-    <div class="desk__art"><img src="./assets/desks/desk-empty.svg" alt="empty"></div>
-    <div class="desk__name desk__name--placeholder">— vacant —</div>
-  `;
-  return desk;
-}
-
 function renderDesks(sessions) {
   deskGrid.innerHTML = '';
-  if (sessions.length === 0) {
-    for (let i = 0; i < OFFICE_CAPACITY; i++) deskGrid.appendChild(buildEmptyDesk());
-    return;
-  }
+  if (sessions.length === 0) return;
 
   // Group by projectRoot (git toplevel) into rooms.
   const rooms = new Map();
@@ -148,13 +131,6 @@ function renderDesks(sessions) {
   for (const s of standalone) {
     deskGrid.appendChild(buildDeskEl(s));
   }
-
-  // Fill up to OFFICE_CAPACITY with empty placeholders so a sparse office still looks
-  // like a room rather than a list. Rooms (grouped projects) count as 1 occupant each
-  // since they visually expand on their own.
-  const occupied = standalone.length + multi.length;
-  const needed = Math.max(0, OFFICE_CAPACITY - occupied);
-  for (let i = 0; i < needed; i++) deskGrid.appendChild(buildEmptyDesk());
 }
 
 function buildDeskEl(s) {
@@ -261,7 +237,7 @@ async function refreshHookStatus() {
   try {
     const summary = await invoke('connector_status');
     const claude = (summary.providers || []).find((p) => p.provider === 'claude');
-    const dismissed = sessionStorage.getItem('officeBannerDismissed') === '1';
+    const dismissed = localStorage.getItem('officeBannerDismissed') === '1';
     console.debug('[agent-office] claude hook status', claude);
     if (claude && !claude.installed && !dismissed) {
       hookBanner.hidden = false;
@@ -289,7 +265,7 @@ installHookButton.addEventListener('click', async () => {
 
 dismissBannerButton.addEventListener('click', () => {
   hookBanner.hidden = true;
-  sessionStorage.setItem('officeBannerDismissed', '1');
+  localStorage.setItem('officeBannerDismissed', '1');
 });
 
 refreshButton.addEventListener('click', () => {

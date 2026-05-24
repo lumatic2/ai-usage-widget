@@ -29,6 +29,8 @@ impl fmt::Display for CodexError {
 
 const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const USER_AGENT: &str = "AIUsageWidget/0.1.1 (Tauri)";
+const CODEX_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 #[derive(Debug, Clone)]
 pub struct CodexUsage {
@@ -41,6 +43,7 @@ pub struct CodexUsage {
 struct AuthTokens {
     access_token: Option<String>,
     account_id: Option<String>,
+    refresh_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,19 +94,22 @@ pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage
     let tokens = auth.tokens.unwrap_or(AuthTokens {
         access_token: None,
         account_id: None,
+        refresh_token: None,
     });
     let access_token = tokens
         .access_token
         .or(auth.openai_api_key)
         .ok_or(CodexError::NotConfigured)?;
     let account_id = tokens.account_id.unwrap_or_default();
+    let refresh_token = tokens.refresh_token.unwrap_or_default();
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms.max(2000)))
         .build()
         .map_err(|e| CodexError::Other(e.to_string()))?;
 
-    let body = send_with_retries(&client, &access_token, &account_id, max_retries).await?;
+    let body =
+        send_with_retries(&client, &access_token, &account_id, &refresh_token, max_retries).await?;
 
     let plan_type = body
         .get("plan_type")
@@ -125,14 +131,17 @@ async fn send_with_retries(
     client: &reqwest::Client,
     access_token: &str,
     account_id: &str,
+    refresh_token: &str,
     max_retries: u32,
 ) -> Result<serde_json::Value, CodexError> {
     let mut last_error: Option<CodexError> = None;
+    let mut token = access_token.to_string();
+    let mut refreshed_once = false;
     for attempt in 0..=max_retries {
         let mut req = client
             .get(CHATGPT_USAGE_URL)
             .header("Accept", "application/json")
-            .header("Authorization", format!("Bearer {access_token}"))
+            .header("Authorization", format!("Bearer {token}"))
             .header("User-Agent", USER_AGENT);
         if !account_id.is_empty() {
             req = req.header("ChatGPT-Account-Id", account_id);
@@ -142,6 +151,16 @@ async fn send_with_retries(
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() == 401 || status.as_u16() == 403 {
+                    if !refreshed_once && !refresh_token.is_empty() {
+                        refreshed_once = true;
+                        match refresh_and_persist(client, refresh_token).await {
+                            Ok(new_token) => {
+                                token = new_token;
+                                continue;
+                            }
+                            Err(_) => return Err(CodexError::SessionExpired),
+                        }
+                    }
                     return Err(CodexError::SessionExpired);
                 }
                 if !status.is_success() {
@@ -183,4 +202,73 @@ async fn send_with_retries(
 async fn sleep_backoff(attempt: u32) {
     let ms = 400u64 * u64::from(attempt + 1);
     tokio::time::sleep(Duration::from_millis(ms)).await;
+}
+
+#[derive(Deserialize)]
+struct RefreshResponse {
+    access_token: Option<String>,
+    id_token: Option<String>,
+    refresh_token: Option<String>,
+}
+
+async fn refresh_and_persist(
+    client: &reqwest::Client,
+    refresh_token: &str,
+) -> Result<String, CodexError> {
+    let form = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", CODEX_OAUTH_CLIENT_ID),
+    ];
+    let resp = client
+        .post(CODEX_OAUTH_TOKEN_URL)
+        .header("Accept", "application/json")
+        .header("User-Agent", USER_AGENT)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| CodexError::Other(format!("token refresh failed: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CodexError::Other(format!(
+            "token refresh failed: {}",
+            resp.status().as_u16()
+        )));
+    }
+    let body: RefreshResponse = resp
+        .json()
+        .await
+        .map_err(|e| CodexError::Other(format!("token refresh parse: {e}")))?;
+    let new_access = body
+        .access_token
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| CodexError::Other("token refresh: empty access_token".into()))?;
+
+    // Write-back to auth.json preserving unknown fields.
+    let path = codex_home().join("auth.json");
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(tokens) = v.get_mut("tokens").and_then(|t| t.as_object_mut()) {
+                tokens.insert(
+                    "access_token".into(),
+                    serde_json::Value::String(new_access.clone()),
+                );
+                if let Some(id) = body.id_token.filter(|s| !s.is_empty()) {
+                    tokens.insert("id_token".into(), serde_json::Value::String(id));
+                }
+                if let Some(rt) = body.refresh_token.filter(|s| !s.is_empty()) {
+                    tokens.insert("refresh_token".into(), serde_json::Value::String(rt));
+                }
+            }
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(
+                    "last_refresh".into(),
+                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                );
+            }
+            if let Ok(json) = serde_json::to_string_pretty(&v) {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+    }
+    Ok(new_access)
 }

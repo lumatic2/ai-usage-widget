@@ -64,17 +64,59 @@ pub struct AgentEvent {
 pub struct ConnectorStore {
     providers: Mutex<HashMap<String, ProviderState>>,
     agent_events: Mutex<HashMap<String, AgentEvent>>, // keyed by session_id
+    session_pids: Mutex<HashMap<String, u32>>,         // session_id → parent (Claude Code) pid
     persistence_path: PathBuf,
+    session_pids_path: PathBuf,
+    last_good_sessions: Mutex<HashMap<String, crate::agent_office::SessionInfo>>,
 }
 
 impl ConnectorStore {
     pub fn new(persistence_path: PathBuf) -> Self {
         let providers = load_persisted(&persistence_path);
+        let session_pids_path = persistence_path
+            .parent()
+            .map(|p| p.join("connector_session_pids.json"))
+            .unwrap_or_else(|| PathBuf::from("connector_session_pids.json"));
+        let session_pids = load_session_pids(&session_pids_path);
         Self {
             providers: Mutex::new(providers),
             agent_events: Mutex::new(HashMap::new()),
+            session_pids: Mutex::new(session_pids),
             persistence_path,
+            session_pids_path,
+            last_good_sessions: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn get_session_pid(&self, session_id: &str) -> Option<u32> {
+        self.session_pids.lock().ok()?.get(session_id).copied()
+    }
+
+    pub fn record_session_pid(&self, session_id: String, pid: u32) {
+        if let Ok(mut g) = self.session_pids.lock() {
+            g.insert(session_id, pid);
+            save_session_pids(&self.session_pids_path, &g);
+        }
+    }
+
+    pub fn purge_dead_pids(&self, live_pids: &std::collections::HashSet<u32>) {
+        if let Ok(mut g) = self.session_pids.lock() {
+            let before = g.len();
+            g.retain(|_, pid| live_pids.contains(pid));
+            if g.len() != before {
+                save_session_pids(&self.session_pids_path, &g);
+            }
+        }
+    }
+
+    pub fn cache_session(&self, session: &crate::agent_office::SessionInfo) {
+        if let Ok(mut g) = self.last_good_sessions.lock() {
+            g.insert(session.session_id.clone(), session.clone());
+        }
+    }
+
+    pub fn get_cached_session(&self, session_id: &str) -> Option<crate::agent_office::SessionInfo> {
+        self.last_good_sessions.lock().ok()?.get(session_id).cloned()
     }
 
     pub fn get(&self, provider: &str) -> Option<ProviderState> {
@@ -187,6 +229,20 @@ fn save_persisted(path: &PathBuf, entries: &HashMap<String, DailyEntry>) {
     }
 }
 
+fn load_session_pids(path: &PathBuf) -> HashMap<String, u32> {
+    let Ok(raw) = std::fs::read_to_string(path) else { return HashMap::new() };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_session_pids(path: &PathBuf, pids: &HashMap<String, u32>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(pids) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
 pub async fn start_server(port: u16, store: Arc<ConnectorStore>) -> std::io::Result<()> {
     let app = Router::new()
         .route("/v1/health", get(health))
@@ -202,12 +258,25 @@ async fn post_agent_event(
     Path(event): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    if !matches!(event.as_str(), "stop" | "session_end" | "subagent_stop") {
+    if !matches!(
+        event.as_str(),
+        "session_start" | "stop" | "session_end" | "subagent_stop"
+    ) {
         return Err(StatusCode::NOT_FOUND);
     }
     let session_id = pick_str(&body, &["session_id", "sessionId"]).unwrap_or_default();
     if session_id.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    if event == "session_start" {
+        if let Some(pid) = body
+            .get("parentPid")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+        {
+            store.record_session_pid(session_id.clone(), pid);
+        }
+        return Ok(Json(serde_json::json!({ "ok": true })));
     }
     let cwd = pick_str(&body, &["cwd"]);
     store.record_agent_event(AgentEvent {

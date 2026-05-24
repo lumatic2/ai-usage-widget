@@ -1,9 +1,11 @@
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
 use crate::connector::ConnectorStore;
 
@@ -379,6 +381,11 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
 
     let mut sessions: Vec<SessionInfo> = Vec::new();
     let mut all_events: Vec<ActivityLogEntry> = Vec::new();
+    let live_pids = snapshot_live_pids();
+
+    if let Some(s) = store.as_ref() {
+        s.purge_dead_pids(&live_pids);
+    }
 
     let Ok(dirs) = fs::read_dir(&root) else {
         return AgentOfficeState {
@@ -406,15 +413,25 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
 
         let Some(tail) = read_tail(&jsonl_path, TAIL_BYTES) else { continue };
         let parsed = parse_transcript_tail(&tail);
-        if parsed.last_activity_at_ms == 0 {
-            continue;
-        }
 
         let session_id = jsonl_path
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
+
+        if parsed.last_activity_at_ms == 0 {
+            // Race condition: Claude Code was writing to the file mid-read.
+            // Fall back to the last-good cached SessionInfo for this session.
+            if let Some(s) = store.as_ref() {
+                if let Some(mut cached) = s.get_cached_session(&session_id) {
+                    cached.idle_seconds = ((now - cached.last_activity_at_ms) / 1000).max(0);
+                    sessions.push(cached);
+                }
+            }
+            continue;
+        }
+
         let project_name = project_name_from_slug_or_cwd(slug, parsed.cwd.as_deref());
         let idle_seconds = ((now - parsed.last_activity_at_ms) / 1000).max(0);
         let mut status = classify_status(
@@ -422,19 +439,21 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
             &parsed.last_turn_role,
             &parsed.last_assistant_stop_reason,
         );
-        // Only SessionEnd is a real session-close signal. Stop / SubagentStop fire on
-        // every turn boundary and should be treated as idle, not done.
         if let Some(s) = store.as_ref() {
+            if let Some(pid) = s.get_session_pid(&session_id) {
+                if !live_pids.contains(&pid) {
+                    continue;
+                }
+            }
             if let Some(event) = s.get_agent_event(&session_id) {
                 if event.event == "session_end" {
                     let event_ms = event.at.timestamp_millis();
                     if event_ms >= parsed.last_activity_at_ms - 2_000 {
-                        status = "done".into();
+                        continue;
                     }
                 }
             }
         }
-        // Stale idle → auto-done.
         if status == "idle" && idle_seconds > STALE_DONE_SECONDS {
             status = "done".into();
         }
@@ -462,7 +481,7 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
             .unwrap_or((None, false));
         let is_detached = matches!(parsed.git_branch.as_deref(), Some("HEAD"));
 
-        sessions.push(SessionInfo {
+        let session_info = SessionInfo {
             provider: "claude".into(),
             session_id,
             project_name,
@@ -477,7 +496,13 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
             idle_seconds,
             status,
             turn_count: parsed.turn_count,
-        });
+        };
+
+        if let Some(s) = store.as_ref() {
+            s.cache_session(&session_info);
+        }
+
+        sessions.push(session_info);
     }
 
     let (codex_sessions, codex_events) = scan_codex(ACTIVE_WINDOW_SECONDS);
@@ -493,6 +518,18 @@ pub fn scan(store: Option<Arc<ConnectorStore>>) -> AgentOfficeState {
         log: all_events,
         scanned_at_ms: now,
     }
+}
+
+fn snapshot_live_pids() -> HashSet<u32> {
+    let mut sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+    );
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    sys.processes().keys().map(|p: &Pid| p.as_u32()).collect()
 }
 
 // ---- Codex rollout scanner ----

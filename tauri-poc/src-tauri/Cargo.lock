@@ -4012,6 +4012,7 @@ name = "tauri-poc"
 version = "0.1.1"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "reqwest 0.12.28",
  "serde",
