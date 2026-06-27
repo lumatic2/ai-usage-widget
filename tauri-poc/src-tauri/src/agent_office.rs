@@ -143,7 +143,7 @@ fn project_name_from_slug_or_cwd(slug: &str, cwd: Option<&str>) -> String {
             }
         }
     }
-    // slug like "C--Users-yusun-projects-ai-usage-widget" — take last hyphen-separated segment as a hint
+    // slug like "C--Users-name-projects-ai-usage-widget" — take last hyphen-separated segment as a hint
     slug.rsplit('-').next().unwrap_or(slug).to_string()
 }
 
