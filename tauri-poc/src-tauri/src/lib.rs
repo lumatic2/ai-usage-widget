@@ -113,6 +113,10 @@ struct PublicSettings {
     claude_session_key: Option<String>,
     #[serde(default)]
     claude_account_label: Option<String>,
+    /// Which Claude account feeds the panel: "auto" (Claude Code OAuth,
+    /// falling back to the claude.ai web login), "oauth", or "cookie".
+    #[serde(default = "default_claude_source")]
+    claude_source: String,
     #[serde(default)]
     consent_accepted: bool,
     #[serde(default = "default_language")]
@@ -121,6 +125,10 @@ struct PublicSettings {
 
 fn default_language() -> String {
     "en".into()
+}
+
+fn default_claude_source() -> String {
+    "auto".into()
 }
 
 fn default_show_gemini() -> bool {
@@ -154,6 +162,7 @@ impl Default for PublicSettings {
             cached_org_uuid: None,
             claude_session_key: None,
             claude_account_label: None,
+            claude_source: default_claude_source(),
             consent_accepted: false,
             language: default_language(),
         }
@@ -616,33 +625,59 @@ fn dispatch_alerts(app: &tauri::AppHandle, settings: &PublicSettings, state: &Wi
     }
 }
 
+async fn fetch_claude_cookie(
+    settings: &PublicSettings,
+) -> Result<claude::ClaudeUsage, claude::ClaudeError> {
+    let Some(sk) = settings
+        .claude_session_key
+        .as_ref()
+        .filter(|s| !s.is_empty())
+    else {
+        // No web login yet — surface the LOGIN button.
+        return Err(claude::ClaudeError::SessionExpired);
+    };
+    let mut result = claude::fetch_usage_with_cookie(
+        settings.fetch_timeout_ms,
+        settings.fetch_retries,
+        sk,
+        settings.cached_org_uuid.clone(),
+    )
+    .await;
+    if let Ok(u) = result.as_mut() {
+        if u.account_label.is_none() {
+            u.account_label = settings
+                .claude_account_label
+                .clone()
+                .or_else(|| Some("claude.ai session".into()));
+        }
+    }
+    result
+}
+
 async fn fetch_claude_with_fallback(
     settings: &PublicSettings,
 ) -> Result<claude::ClaudeUsage, claude::ClaudeError> {
-    let bearer = claude::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries).await;
-    if let Ok(u) = bearer {
-        return Ok(u);
-    }
-    match settings.claude_session_key.as_ref() {
-        Some(sk) if !sk.is_empty() => {
-            let mut result = claude::fetch_usage_with_cookie(
-                settings.fetch_timeout_ms,
-                settings.fetch_retries,
-                sk,
-                settings.cached_org_uuid.clone(),
-            )
-            .await;
-            if let Ok(u) = result.as_mut() {
-                if u.account_label.is_none() {
-                    u.account_label = settings
-                        .claude_account_label
-                        .clone()
-                        .or_else(|| Some("claude.ai session".into()));
-                }
+    match settings.claude_source.as_str() {
+        // Pin to the claude.ai web login (e.g. a different account than the
+        // Claude Code CLI's) — never read the OAuth credentials.
+        "cookie" => fetch_claude_cookie(settings).await,
+        // Pin to the Claude Code login only.
+        "oauth" => claude::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries).await,
+        // auto: Claude Code OAuth first, web session as fallback.
+        _ => {
+            let bearer =
+                claude::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries).await;
+            if bearer.is_ok()
+                || settings
+                    .claude_session_key
+                    .as_deref()
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+            {
+                return bearer;
             }
-            result
+            fetch_claude_cookie(settings).await
         }
-        _ => bearer,
     }
 }
 
@@ -690,6 +725,11 @@ fn sanitize(mut s: PublicSettings) -> PublicSettings {
         "ko" => "ko".into(),
         _ => "en".into(),
     };
+    s.claude_source = match s.claude_source.as_str() {
+        "oauth" => "oauth".into(),
+        "cookie" => "cookie".into(),
+        _ => "auto".into(),
+    };
     if !s.show_claude && !s.show_codex && !s.show_gemini {
         s.show_claude = true;
     }
@@ -708,6 +748,7 @@ fn merge_partial(current: &PublicSettings, partial: &serde_json::Value) -> Publi
         if let Some(v) = o.get("refreshIntervalMs").and_then(|x| x.as_u64()) { next.refresh_interval_ms = v; }
         if let Some(v) = o.get("openOnStartup").and_then(|x| x.as_bool()) { next.open_on_startup = v; }
         if let Some(v) = o.get("language").and_then(|x| x.as_str()) { next.language = v.to_string(); }
+        if let Some(v) = o.get("claudeSource").and_then(|x| x.as_str()) { next.claude_source = v.to_string(); }
         if let Some(arr) = o.get("usageAlertThresholds").and_then(|x| x.as_array()) {
             next.usage_alert_thresholds = arr.iter().filter_map(|n| n.as_u64().map(|x| x as u32)).collect();
         }

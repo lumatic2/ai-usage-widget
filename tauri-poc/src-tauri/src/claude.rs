@@ -421,7 +421,9 @@ pub async fn fetch_usage_with_cookie(
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
-        scoped: Vec::new(),
+        // claude.ai's org usage response carries the same `limits` array as
+        // the OAuth endpoint, so model-scoped windows work on this path too.
+        scoped: parse_scoped_windows(&payload),
         org_uuid,
         account_label,
     })

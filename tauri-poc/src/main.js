@@ -72,6 +72,7 @@ const claudeColumn = document.querySelector('.col--claude');
 const codexColumn = document.querySelector('.col--codex');
 const languageSelect = document.getElementById('languageSelect');
 const displayModeSelect = document.getElementById('displayModeSelect');
+const claudeSourceSelect = document.getElementById('claudeSourceSelect');
 const refreshSecondsInput = document.getElementById('refreshSecondsInput');
 const uiScaleSelect = document.getElementById('uiScaleSelect');
 const alertsEnabledInput = document.getElementById('alertsEnabledInput');
@@ -97,6 +98,9 @@ const I18N = {
     'settings.display': 'Display',
     'settings.displayUsed': 'USED',
     'settings.displayLeft': 'LEFT',
+    'settings.claudeSource': 'Claude account',
+    'settings.claudeSourceAuto': 'Auto',
+    'settings.claudeSourceCookie': 'claude.ai login',
     'settings.refresh': 'Refresh(s)',
     'settings.alerts': 'Usage alerts',
     'settings.thresholds': 'Thresholds',
@@ -136,6 +140,9 @@ const I18N = {
     'settings.display': '표시',
     'settings.displayUsed': '사용',
     'settings.displayLeft': '잔여',
+    'settings.claudeSource': 'Claude 계정',
+    'settings.claudeSourceAuto': '자동',
+    'settings.claudeSourceCookie': 'claude.ai 로그인',
     'settings.refresh': '갱신(초)',
     'settings.alerts': '사용량 알림',
     'settings.thresholds': '임계값',
@@ -236,6 +243,7 @@ function syncSettingsInputs(settings) {
   }
   languageSelect.value = lang;
   displayModeSelect.value = normalizeDisplayMode(settings.displayMode);
+  claudeSourceSelect.value = ['oauth', 'cookie'].includes(settings.claudeSource) ? settings.claudeSource : 'auto';
   refreshSecondsInput.value = Math.max(10, Math.round((settings.refreshIntervalMs || 60000) / 1000));
   const scale = Number(settings.uiScale);
   applyUiScale(Number.isFinite(scale) ? scale : 1);
@@ -721,6 +729,7 @@ settingsSaveButton.addEventListener('click', async () => {
   const payload = {
     language: languageSelect.value === 'ko' ? 'ko' : 'en',
     displayMode: normalizeDisplayMode(displayModeSelect.value),
+    claudeSource: claudeSourceSelect.value,
     refreshIntervalMs: Math.max(10, Number(refreshSecondsInput.value || 60)) * 1000,
     enableUsageAlerts: Boolean(alertsEnabledInput.checked),
     usageAlertThresholds: parseThresholds(alertThresholdsInput.value),

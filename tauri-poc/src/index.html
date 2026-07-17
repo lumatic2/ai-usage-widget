@@ -136,6 +136,14 @@
             </select>
           </div>
           <div class="settings-row">
+            <label class="settings-label" for="claudeSourceSelect" data-i18n="settings.claudeSource">Claude account</label>
+            <select class="settings-input" id="claudeSourceSelect">
+              <option value="auto" data-i18n="settings.claudeSourceAuto">Auto</option>
+              <option value="oauth">Claude Code</option>
+              <option value="cookie" data-i18n="settings.claudeSourceCookie">claude.ai login</option>
+            </select>
+          </div>
+          <div class="settings-row">
             <label class="settings-label" for="refreshSecondsInput" data-i18n="settings.refresh">Refresh(s)</label>
             <input class="settings-input" id="refreshSecondsInput" type="number" min="10" max="600" />
           </div>
