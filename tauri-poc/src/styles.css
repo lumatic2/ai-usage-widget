@@ -139,6 +139,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.today-line {
+  position: relative;
+  z-index: 1;
+  margin: 6px 0 0 16px;
+  max-width: calc(100% - 24px);
+  font-size: 10px;
+  color: rgba(251, 242, 232, 0.66);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .title-pill {
   display: inline-flex;
   align-items: center;

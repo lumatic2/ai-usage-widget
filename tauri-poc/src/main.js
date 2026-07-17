@@ -53,6 +53,9 @@ const claudeStatusPill = document.getElementById('claudeStatusPill');
 const claudeAccountTag = document.getElementById('claudeAccountTag');
 const codexAccountTag = document.getElementById('codexAccountTag');
 const claudeScopedList = document.getElementById('claudeScopedList');
+const claudeTodayLine = document.getElementById('claudeTodayLine');
+const codexTodayLine = document.getElementById('codexTodayLine');
+const geminiTodayLine = document.getElementById('geminiTodayLine');
 const claudeLoginWrap = document.getElementById('claudeLoginWrap');
 const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
@@ -266,6 +269,39 @@ function render(state) {
 
   renderClaudeSection(state.claude, displayMode);
   renderGeminiSection(state.gemini);
+
+  const tokenCost = state.tokenCost || {};
+  renderTodayLine(claudeTodayLine, tokenCost.claude);
+  renderTodayLine(codexTodayLine, tokenCost.codex);
+  renderTodayLine(geminiTodayLine, tokenCost.gemini);
+}
+
+function formatTokensCompact(n) {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
+}
+
+// Local session-file aggregation: fresh input + output today, plus est. cost.
+function renderTodayLine(el, usage) {
+  const u = usage || {};
+  const tokens = (u.billableInputTokens || 0) + (u.outputTokens || 0);
+  const anyActivity = tokens > 0 || (u.cacheReadTokens || 0) > 0;
+  el.hidden = !anyActivity;
+  if (!anyActivity) {
+    el.textContent = '';
+    return;
+  }
+  const cost = Number(u.costUsd) || 0;
+  const costText = `~$${cost.toFixed(2)}${u.hasUnpricedModel ? '+' : ''}`;
+  el.textContent = `TODAY ${costText} · ${formatTokensCompact(tokens)} tok`;
+  el.title =
+    `in ${formatTokensCompact(u.inputTokens || 0)}` +
+    ` · out ${formatTokensCompact(u.outputTokens || 0)}` +
+    ` · cache read ${formatTokensCompact(u.cacheReadTokens || 0)}` +
+    ` · cache write ${formatTokensCompact(u.cacheCreationTokens || 0)}`;
 }
 
 function renderGeminiSection(state) {

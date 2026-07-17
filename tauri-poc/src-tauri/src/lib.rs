@@ -3,6 +3,7 @@ mod codex;
 mod gemini;
 mod secure;
 mod session;
+mod token_cost;
 mod widget_core;
 
 use serde::{Deserialize, Serialize};
@@ -68,6 +69,7 @@ struct WidgetState {
     display_mode: String,
     error: Option<String>,
     gemini: GeminiState,
+    token_cost: token_cost::TokenCostSnapshot,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -165,6 +167,7 @@ struct AppState {
     session_cache: Mutex<session::SessionCache>,
     last_codex_good: Mutex<Option<CachedCodex>>,
     last_claude_good: Mutex<Option<CachedClaude>>,
+    token_cost: Mutex<token_cost::TokenCostState>,
 }
 
 #[derive(Clone)]
@@ -271,6 +274,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 cloud_available: false,
                 ..GeminiState::default()
             },
+            token_cost: token_cost::TokenCostSnapshot::default(),
         };
     }
     let codex_future = codex::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries);
@@ -419,7 +423,18 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         display_mode: settings.display_mode.clone(),
         error,
         gemini: build_gemini_state(gemini_result),
+        token_cost: load_token_cost(app),
     }
+}
+
+fn load_token_cost(app: &tauri::AppHandle) -> token_cost::TokenCostSnapshot {
+    let Some(state) = app.try_state::<AppState>() else {
+        return token_cost::TokenCostSnapshot::default();
+    };
+    let Ok(mut guard) = state.token_cost.lock() else {
+        return token_cost::TokenCostSnapshot::default();
+    };
+    token_cost::refresh(&mut guard)
 }
 
 fn build_gemini_state(
@@ -934,6 +949,7 @@ pub fn run() {
                 session_cache: Mutex::new(session::SessionCache::default()),
                 last_codex_good: Mutex::new(None),
                 last_claude_good: Mutex::new(None),
+                token_cost: Mutex::new(token_cost::TokenCostState::default()),
             });
 
             let app_handle = app.handle().clone();
