@@ -132,7 +132,10 @@ const PRICING: &[(&str, Rate)] = &[
     ("claude-sonnet", (3.0, 15.0, 0.3, 3.75)),
     ("claude-haiku-4-5", (1.0, 5.0, 0.1, 1.25)),
     ("claude-3-5-haiku", (0.8, 4.0, 0.08, 1.0)),
-    // gpt-5.6 pricing not yet published — assumed same tier as 5.5
+    // GPT-5.6 tiers (official, 2026-07): Sol $5/$30, Terra $2.5/$15, Luna $1/$6;
+    // cached input bills at 10% of the input rate. Bare "gpt-5.6" matches Sol.
+    ("gpt-5.6-terra", (2.5, 15.0, 0.25, 0.0)),
+    ("gpt-5.6-luna", (1.0, 6.0, 0.1, 0.0)),
     ("gpt-5.6", (5.0, 30.0, 0.5, 0.0)),
     ("gpt-5.5", (5.0, 30.0, 0.5, 0.0)),
     ("gpt-5.4-mini", (0.75, 4.5, 0.075, 0.0)),
@@ -414,7 +417,13 @@ fn scan_claude(scan: &mut ClaudeScan) -> HashMap<String, Tokens> {
 pub enum CodexEvent {
     SessionMeta { fork: bool },
     TurnContext { model: String },
-    TokenCount { input: u64, cached_input: u64, output: u64 },
+    TokenCount {
+        input: u64,
+        cached_input: u64,
+        output: u64,
+        /// None when the line has no parseable timestamp.
+        is_today: Option<bool>,
+    },
 }
 
 pub fn parse_codex_line(line: &str) -> Option<CodexEvent> {
@@ -454,6 +463,10 @@ pub fn parse_codex_line(line: &str) -> Option<CodexEvent> {
                 input: g("input_tokens"),
                 cached_input: g("cached_input_tokens"),
                 output: g("output_tokens"),
+                is_today: v
+                    .get("timestamp")
+                    .and_then(|t| t.as_str())
+                    .and_then(is_today_rfc3339),
             })
         }
         _ => None,
@@ -484,23 +497,32 @@ pub fn codex_delta(state: &mut CodexFileState, cur: (u64, u64, u64)) -> Option<T
     })
 }
 
-fn collect_codex_files() -> Vec<PathBuf> {
-    // Only today's dated directory — sessions spanning midnight are attributed
-    // to their start day (accepted v1 simplification).
+/// (path, dir_is_today). Sessions live under dated directories keyed by their
+/// *start* day, so a session spanning midnight keeps writing into yesterday's
+/// directory — scan both days and attribute per-event via line timestamps.
+fn collect_codex_files() -> Vec<(PathBuf, bool)> {
+    let sessions = home_dir().join(".codex").join("sessions");
     let now = Local::now();
-    let dir = home_dir()
-        .join(".codex")
-        .join("sessions")
-        .join(now.format("%Y").to_string())
-        .join(now.format("%m").to_string())
-        .join(now.format("%d").to_string());
     let mut files = Vec::new();
-    push_jsonl(&dir, &mut files);
+    for (day, is_today) in [(now - chrono::Duration::days(1), false), (now, true)] {
+        let dir = sessions
+            .join(day.format("%Y").to_string())
+            .join(day.format("%m").to_string())
+            .join(day.format("%d").to_string());
+        let mut day_files = Vec::new();
+        push_jsonl(&dir, &mut day_files);
+        files.extend(day_files.into_iter().map(|p| (p, is_today)));
+    }
     files
 }
 
 fn scan_codex(scan: &mut CodexScan) {
-    for path in collect_codex_files() {
+    for (path, dir_is_today) in collect_codex_files() {
+        // Yesterday's files that haven't been written today can't contain
+        // today's events — skip without opening.
+        if !dir_is_today && !mtime_is_today(&path) {
+            continue;
+        }
         let state = scan.files.entry(path.clone()).or_default();
         let Some(new_text) = read_new_lines(&path, &mut state.cursor) else { continue };
         for line in new_text.lines() {
@@ -513,8 +535,14 @@ fn scan_codex(scan: &mut CodexScan) {
                 Some(CodexEvent::TurnContext { model }) => {
                     state.model = normalize_model(&model);
                 }
-                Some(CodexEvent::TokenCount { input, cached_input, output }) => {
-                    if let Some(delta) = codex_delta(state, (input, cached_input, output)) {
+                Some(CodexEvent::TokenCount { input, cached_input, output, is_today }) => {
+                    // Always advance the cumulative baseline; only *count* the
+                    // delta when the event happened today.
+                    let delta = codex_delta(state, (input, cached_input, output));
+                    if !is_today.unwrap_or(dir_is_today) {
+                        continue;
+                    }
+                    if let Some(delta) = delta {
                         let model = if state.model.is_empty() {
                             "gpt-5.5".to_string()
                         } else {
@@ -711,6 +739,22 @@ mod tests {
         // Anomalous decrease must not panic or produce garbage
         let d3 = codex_delta(&mut st, (200, 80, 30)).unwrap();
         assert_eq!((d3.input, d3.cache_read, d3.output), (0, 0, 5));
+    }
+
+    #[test]
+    fn codex_token_count_parses_line_timestamp() {
+        let line = r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#;
+        let Some(CodexEvent::TokenCount { input, is_today, .. }) = parse_codex_line(line) else {
+            panic!("expected TokenCount");
+        };
+        assert_eq!(input, 10);
+        assert_eq!(is_today, Some(false));
+
+        let no_ts = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":0}}}}"#;
+        let Some(CodexEvent::TokenCount { is_today, .. }) = parse_codex_line(no_ts) else {
+            panic!("expected TokenCount");
+        };
+        assert_eq!(is_today, None);
     }
 
     #[test]
