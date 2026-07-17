@@ -6,6 +6,10 @@ use std::time::Duration;
 use crate::WindowSlice;
 
 const ORGS_URL: &str = "https://claude.ai/api/organizations";
+// The Claude Code OAuth token is rejected (403) by claude.ai/api/* — subscription
+// usage for that token lives on api.anthropic.com behind an oauth beta header.
+const OAUTH_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
 const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -14,8 +18,20 @@ const USER_AGENT: &str =
 pub struct ClaudeUsage {
     pub primary: WindowSlice,
     pub secondary: WindowSlice,
+    pub scoped: Vec<ScopedWindow>,
+    /// Only meaningful on the cookie fallback path; empty for the OAuth path.
     pub org_uuid: String,
     pub account_label: Option<String>,
+}
+
+/// Model-scoped usage window (e.g. the Fable-only weekly limit) from the
+/// `limits` array of the OAuth usage response.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopedWindow {
+    pub label: String,
+    pub used_percent: Option<f64>,
+    pub reset_after_seconds: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -39,19 +55,19 @@ impl std::fmt::Display for ClaudeError {
 struct OauthBlock {
     #[serde(default, rename = "accessToken")]
     access_token: Option<String>,
+    #[serde(default, rename = "subscriptionType")]
+    subscription_type: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct CredentialsFile {
     #[serde(default, rename = "claudeAiOauth")]
     claude_ai_oauth: Option<OauthBlock>,
-    #[serde(default, rename = "organizationUuid")]
-    organization_uuid: Option<String>,
 }
 
 pub struct ClaudeCredentials {
     pub access_token: String,
-    pub organization_uuid: Option<String>,
+    pub subscription_type: Option<String>,
 }
 
 fn claude_home() -> PathBuf {
@@ -65,8 +81,6 @@ fn claude_home() -> PathBuf {
 pub struct OauthAccount {
     #[serde(default, rename = "emailAddress")]
     pub email_address: Option<String>,
-    #[serde(default, rename = "organizationUuid")]
-    pub organization_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -93,17 +107,17 @@ pub fn load_credentials() -> Option<ClaudeCredentials> {
     let raw = std::fs::read_to_string(&path).ok()?;
     let parsed: CredentialsFile = serde_json::from_str(&raw).ok()?;
     let oauth = parsed.claude_ai_oauth?;
+    let subscription_type = oauth
+        .subscription_type
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let token = oauth.access_token?.trim().to_string();
     if token.is_empty() {
         return None;
     }
-    let org = parsed
-        .organization_uuid
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
     Some(ClaudeCredentials {
         access_token: token,
-        organization_uuid: org,
+        subscription_type,
     })
 }
 
@@ -167,6 +181,12 @@ async fn resolve_org(
     parse_first_org(&body).ok_or_else(|| ClaudeError::Other("Claude org UUID not found".into()))
 }
 
+fn seconds_until_rfc3339(s: &str) -> Option<i64> {
+    let dt = DateTime::parse_from_rfc3339(s).ok()?;
+    let now = chrono::Utc::now().timestamp();
+    Some((dt.timestamp() - now).max(0))
+}
+
 fn parse_window(payload: Option<&serde_json::Value>) -> WindowSlice {
     let Some(obj) = payload.and_then(|v| v.as_object()) else {
         return WindowSlice {
@@ -181,15 +201,48 @@ fn parse_window(payload: Option<&serde_json::Value>) -> WindowSlice {
     let reset_after_seconds = obj
         .get("resets_at")
         .and_then(|v| v.as_str())
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| {
-            let now = chrono::Utc::now().timestamp();
-            (dt.timestamp() - now).max(0)
-        });
+        .and_then(seconds_until_rfc3339);
     WindowSlice {
         used_percent,
         reset_after_seconds,
     }
+}
+
+/// Pull model-scoped windows (e.g. the Fable weekly limit) out of the OAuth
+/// usage response's `limits` array. Unscoped entries (`session`, `weekly_all`)
+/// duplicate `five_hour`/`seven_day` and are skipped.
+fn parse_scoped_windows(payload: &serde_json::Value) -> Vec<ScopedWindow> {
+    let Some(limits) = payload.get("limits").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    limits
+        .iter()
+        .filter_map(|limit| {
+            let label = limit
+                .get("scope")?
+                .get("model")?
+                .get("display_name")?
+                .as_str()?
+                .trim()
+                .to_string();
+            if label.is_empty() {
+                return None;
+            }
+            let used_percent = limit
+                .get("percent")
+                .and_then(|v| v.as_f64())
+                .map(|n| n.round().clamp(0.0, 100.0));
+            let reset_after_seconds = limit
+                .get("resets_at")
+                .and_then(|v| v.as_str())
+                .and_then(seconds_until_rfc3339);
+            Some(ScopedWindow {
+                label,
+                used_percent,
+                reset_after_seconds,
+            })
+        })
+        .collect()
 }
 
 fn detect_permission_error(payload: &serde_json::Value) -> bool {
@@ -214,21 +267,19 @@ enum AuthHeader<'a> {
 async fn fetch_usage_payload_inner(
     client: &reqwest::Client,
     auth: &AuthHeader<'_>,
-    org_uuid: &str,
+    url: &str,
     max_retries: u32,
 ) -> Result<serde_json::Value, ClaudeError> {
-    let url = format!(
-        "https://claude.ai/api/organizations/{}/usage",
-        urlencoding(org_uuid)
-    );
     let mut last_other: Option<ClaudeError> = None;
     for attempt in 0..=max_retries {
         let req = client
-            .get(&url)
+            .get(url)
             .header("Accept", "application/json")
             .header("User-Agent", USER_AGENT);
         let req = match auth {
-            AuthHeader::Bearer(t) => req.header("Authorization", format!("Bearer {t}")),
+            AuthHeader::Bearer(t) => req
+                .header("Authorization", format!("Bearer {t}"))
+                .header("anthropic-beta", OAUTH_BETA),
             AuthHeader::Cookie(c) => req.header("Cookie", format!("sessionKey={c}")),
         };
         let send_result = req.send().await;
@@ -287,13 +338,11 @@ async fn sleep_backoff(attempt: u32) {
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
 }
 
-async fn fetch_usage_payload(
-    client: &reqwest::Client,
-    access_token: &str,
-    org_uuid: &str,
-    max_retries: u32,
-) -> Result<serde_json::Value, ClaudeError> {
-    fetch_usage_payload_inner(client, &AuthHeader::Bearer(access_token), org_uuid, max_retries).await
+fn org_usage_url(org_uuid: &str) -> String {
+    format!(
+        "https://claude.ai/api/organizations/{}/usage",
+        urlencoding(org_uuid)
+    )
 }
 
 fn urlencoding(s: &str) -> String {
@@ -307,58 +356,31 @@ fn urlencoding(s: &str) -> String {
         .collect()
 }
 
-pub async fn fetch_usage(
-    timeout_ms: u64,
-    max_retries: u32,
-    cached_org_uuid: Option<String>,
-) -> Result<ClaudeUsage, ClaudeError> {
+pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<ClaudeUsage, ClaudeError> {
     let creds = load_credentials().ok_or(ClaudeError::NotConfigured)?;
     let client = build_client(timeout_ms)?;
-    let account = load_account_info();
-    let account_label = account
-        .as_ref()
-        .and_then(|a| a.email_address.clone())
+    // The OAuth usage endpoint is account-scoped — no org UUID involved, so the
+    // response always belongs to the *current* Claude Code login.
+    let payload = fetch_usage_payload_inner(
+        &client,
+        &AuthHeader::Bearer(&creds.access_token),
+        OAUTH_USAGE_URL,
+        max_retries,
+    )
+    .await?;
+    let email = load_account_info()
+        .and_then(|a| a.email_address)
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let account_org = account
-        .and_then(|a| a.organization_uuid)
-        .filter(|s| !s.is_empty());
-
-    // Prefer the org UUID of the *current* Claude Code login over cached values,
-    // so switching accounts (work <-> personal) picks up the right org.
-    let (org_uuid, resolved_fresh) =
-        match account_org.or(creds.organization_uuid).or(cached_org_uuid) {
-            Some(u) => (u, false),
-            None => {
-                let (uuid, _name) =
-                    resolve_org(&client, &AuthHeader::Bearer(&creds.access_token)).await?;
-                (uuid, true)
-            }
-        };
-
-    let (payload, org_uuid) =
-        match fetch_usage_payload(&client, &creds.access_token, &org_uuid, max_retries).await {
-            Ok(p) => (p, org_uuid),
-            // A cached/stored org UUID can belong to a previously signed-in
-            // account, which surfaces as a permission error. Re-resolve the org
-            // for the current token and retry once before reporting expiry.
-            Err(ClaudeError::SessionExpired) if !resolved_fresh => {
-                let (resolved, _name) =
-                    resolve_org(&client, &AuthHeader::Bearer(&creds.access_token)).await?;
-                if resolved == org_uuid {
-                    return Err(ClaudeError::SessionExpired);
-                }
-                let p =
-                    fetch_usage_payload(&client, &creds.access_token, &resolved, max_retries)
-                        .await?;
-                (p, resolved)
-            }
-            Err(e) => return Err(e),
-        };
-
+    let account_label = email.map(|e| match &creds.subscription_type {
+        Some(sub) => format!("{e} · {sub}"),
+        None => e,
+    });
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
-        org_uuid,
+        scoped: parse_scoped_windows(&payload),
+        org_uuid: String::new(),
         account_label,
     })
 }
@@ -369,7 +391,8 @@ async fn fetch_usage_payload_with_cookie(
     org_uuid: &str,
     max_retries: u32,
 ) -> Result<serde_json::Value, ClaudeError> {
-    fetch_usage_payload_inner(client, &AuthHeader::Cookie(session_key), org_uuid, max_retries).await
+    let url = org_usage_url(org_uuid);
+    fetch_usage_payload_inner(client, &AuthHeader::Cookie(session_key), &url, max_retries).await
 }
 
 pub async fn resolve_org_with_cookie(
@@ -398,7 +421,39 @@ pub async fn fetch_usage_with_cookie(
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
+        scoped: Vec::new(),
         org_uuid,
         account_label,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_scoped_windows;
+
+    #[test]
+    fn parses_model_scoped_limits_only() {
+        let payload = serde_json::json!({
+            "limits": [
+                { "kind": "session", "group": "session", "percent": 21,
+                  "resets_at": "2099-01-01T00:00:00+00:00", "scope": null },
+                { "kind": "weekly_all", "group": "weekly", "percent": 11,
+                  "resets_at": "2099-01-01T00:00:00+00:00", "scope": null },
+                { "kind": "weekly_scoped", "group": "weekly", "percent": 18.4,
+                  "resets_at": "2099-01-01T00:00:00+00:00",
+                  "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null } }
+            ]
+        });
+        let scoped = parse_scoped_windows(&payload);
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].label, "Fable");
+        assert_eq!(scoped[0].used_percent, Some(18.0));
+        assert!(scoped[0].reset_after_seconds.unwrap() > 0);
+    }
+
+    #[test]
+    fn missing_limits_array_yields_empty() {
+        assert!(parse_scoped_windows(&serde_json::json!({})).is_empty());
+        assert!(parse_scoped_windows(&serde_json::json!({ "limits": "x" })).is_empty());
+    }
 }

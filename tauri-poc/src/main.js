@@ -52,6 +52,7 @@ const claudeSecondaryReset = document.getElementById('claudeSecondaryReset');
 const claudeStatusPill = document.getElementById('claudeStatusPill');
 const claudeAccountTag = document.getElementById('claudeAccountTag');
 const codexAccountTag = document.getElementById('codexAccountTag');
+const claudeScopedList = document.getElementById('claudeScopedList');
 const claudeLoginWrap = document.getElementById('claudeLoginWrap');
 const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
@@ -409,6 +410,55 @@ function renderUsageSection(elements, state, displayMode) {
   elements.secondaryReset.textContent = formatReset(state.secondary?.resetAfterSeconds);
 }
 
+function renderClaudeScopedList(scoped, displayMode) {
+  const items = Array.isArray(scoped) ? scoped : [];
+  claudeScopedList.hidden = items.length === 0;
+  claudeScopedList.innerHTML = '';
+  for (const item of items) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pixel-card-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'pixel-bar pixel-bar--rose';
+
+    const left = document.createElement('div');
+    left.className = 'bar-left';
+    const icon = document.createElement('img');
+    icon.className = 'bar-icon';
+    icon.src = './icon-week.svg';
+    icon.draggable = false;
+    icon.alt = '';
+    const label = document.createElement('span');
+    label.className = 'bar-label';
+    label.textContent = String(item.label || '').toUpperCase();
+    left.append(icon, label);
+
+    const displayPct = resolveDisplayPercent(item.usedPercent, displayMode);
+    const value = document.createElement('span');
+    value.className = 'bar-value';
+    value.textContent = formatPercent(displayPct);
+
+    const progress = document.createElement('div');
+    progress.className = 'bar-progress';
+    const fill = document.createElement('span');
+    fill.className = 'bar-progress-fill bar-progress-fill--rose';
+    fill.style.width = `${clampPercentForBar(displayPct)}%`;
+    progress.appendChild(fill);
+
+    bar.append(left, value, progress);
+
+    const resetTag = document.createElement('div');
+    resetTag.className = 'reset-tag';
+    const resetText = document.createElement('span');
+    resetText.className = 'reset-tag-text';
+    resetText.textContent = formatReset(item.resetAfterSeconds);
+    resetTag.appendChild(resetText);
+
+    wrap.append(bar, resetTag);
+    claudeScopedList.appendChild(wrap);
+  }
+}
+
 function renderClaudeSection(claudeState, displayMode) {
   const state = claudeState || {};
   const isConfigured = Boolean(state.isConfigured);
@@ -434,6 +484,7 @@ function renderClaudeSection(claudeState, displayMode) {
     claudeErrorBanner.hidden = true;
     dismissedClaudeErrorKey = null;
     currentClaudeErrorKey = null;
+    renderClaudeScopedList([], displayMode);
     return;
   }
 
@@ -448,6 +499,7 @@ function renderClaudeSection(claudeState, displayMode) {
     claudeErrorBanner.hidden = true;
     dismissedClaudeErrorKey = null;
     currentClaudeErrorKey = null;
+    renderClaudeScopedList([], displayMode);
     return;
   }
 
@@ -463,6 +515,8 @@ function renderClaudeSection(claudeState, displayMode) {
     state,
     displayMode
   );
+
+  renderClaudeScopedList(state.scoped, displayMode);
 
   claudeStatusPill.hidden = true;
 

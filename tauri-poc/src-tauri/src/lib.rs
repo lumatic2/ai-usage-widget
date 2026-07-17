@@ -44,6 +44,7 @@ struct ClaudeState {
     error: Option<String>,
     is_cached: bool,
     account_label: Option<String>,
+    scoped: Vec<claude::ScopedWindow>,
 }
 
 #[derive(Serialize, Clone)]
@@ -183,6 +184,7 @@ struct CachedClaude {
     #[allow(dead_code)]
     org_uuid: String,
     account_label: Option<String>,
+    scoped: Vec<claude::ScopedWindow>,
 }
 
 #[derive(Default)]
@@ -260,6 +262,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 error: None,
                 is_cached: false,
                 account_label: None,
+                scoped: Vec::new(),
             },
             session_label: String::new(),
             display_mode: settings.display_mode.clone(),
@@ -359,6 +362,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 error: None,
                 is_cached: false,
                 account_label: u.account_label,
+                scoped: u.scoped,
             }
         }
         Err(claude::ClaudeError::NotConfigured) => ClaudeState {
@@ -369,6 +373,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             error: None,
             is_cached: false,
             account_label: None,
+            scoped: Vec::new(),
         },
         Err(claude::ClaudeError::SessionExpired) => ClaudeState {
             is_configured: true,
@@ -378,6 +383,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             error: Some("Claude session expired. Please log in again.".into()),
             is_cached: false,
             account_label: None,
+            scoped: Vec::new(),
         },
         Err(claude::ClaudeError::Other(msg)) => match read_claude_cache(app) {
             Some(cached) => ClaudeState {
@@ -388,6 +394,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 error: Some(msg),
                 is_cached: true,
                 account_label: cached.account_label,
+                scoped: cached.scoped,
             },
             None => ClaudeState {
                 is_configured: true,
@@ -397,6 +404,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 error: Some(msg),
                 is_cached: false,
                 account_label: None,
+                scoped: Vec::new(),
             },
         },
     };
@@ -483,6 +491,7 @@ fn store_claude_cache(app: &tauri::AppHandle, usage: &claude::ClaudeUsage) {
             secondary: usage.secondary.clone(),
             org_uuid: usage.org_uuid.clone(),
             account_label: usage.account_label.clone(),
+            scoped: usage.scoped.clone(),
         });
     };
 }
@@ -595,12 +604,7 @@ fn dispatch_alerts(app: &tauri::AppHandle, settings: &PublicSettings, state: &Wi
 async fn fetch_claude_with_fallback(
     settings: &PublicSettings,
 ) -> Result<claude::ClaudeUsage, claude::ClaudeError> {
-    let bearer = claude::fetch_usage(
-        settings.fetch_timeout_ms,
-        settings.fetch_retries,
-        settings.cached_org_uuid.clone(),
-    )
-    .await;
+    let bearer = claude::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries).await;
     if let Ok(u) = bearer {
         return Ok(u);
     }
@@ -628,6 +632,10 @@ async fn fetch_claude_with_fallback(
 }
 
 fn persist_org_uuid(app: &tauri::AppHandle, uuid: &str) {
+    // The OAuth path carries no org UUID; only the cookie path persists one.
+    if uuid.is_empty() {
+        return;
+    }
     let Some(state) = app.try_state::<AppState>() else { return; };
     let mut should_save = false;
     let snapshot = {

@@ -18,6 +18,8 @@
   --claude-purple-bottom: #7c4dff;
   --claude-teal-top: #64ffda;
   --claude-teal-bottom: #1de9b6;
+  --claude-rose-top: #ff8fb8;
+  --claude-rose-bottom: #e0447f;
 }
 
 * {
@@ -296,6 +298,14 @@ body {
   background: linear-gradient(180deg, #ead7ff 0%, rgba(255,255,255,0) 100%);
 }
 
+.pixel-bar--rose {
+  background: linear-gradient(180deg, var(--claude-rose-top) 0%, var(--claude-rose-bottom) 100%);
+}
+
+.pixel-bar--rose::before {
+  background: linear-gradient(180deg, #ffdce9 0%, rgba(255,255,255,0) 100%);
+}
+
 .pixel-bar--teal {
   background: linear-gradient(180deg, var(--claude-teal-top) 0%, var(--claude-teal-bottom) 100%);
 }
@@ -439,6 +449,10 @@ body {
 
 .bar-progress-fill--purple {
   background: linear-gradient(180deg, #efe1ff 0%, #efe1ff 45%, var(--claude-purple-top) 45%, var(--claude-purple-bottom) 100%);
+}
+
+.bar-progress-fill--rose {
+  background: linear-gradient(180deg, #ffe4ee 0%, #ffe4ee 45%, var(--claude-rose-top) 45%, var(--claude-rose-bottom) 100%);
 }
 
 .bar-progress-fill--teal {
