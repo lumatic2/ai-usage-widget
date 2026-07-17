@@ -1,10 +1,5 @@
-mod agent_office;
-mod agent_scan;
-mod focus_session;
 mod claude;
 mod codex;
-mod connector;
-mod connector_install;
 mod gemini;
 mod secure;
 mod session;
@@ -12,11 +7,10 @@ mod widget_core;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const LAST_GOOD_TTL: Duration = Duration::from_secs(5 * 60);
-const CONNECTOR_PORT: u16 = 8766;
 use tauri::{
     Emitter, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
@@ -49,6 +43,7 @@ struct ClaudeState {
     secondary: WindowSlice,
     error: Option<String>,
     is_cached: bool,
+    account_label: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -57,6 +52,7 @@ struct CodexState {
     is_configured: bool,
     needs_login: bool,
     is_cached: bool,
+    account_email: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -70,32 +66,18 @@ struct WidgetState {
     session_label: String,
     display_mode: String,
     error: Option<String>,
-    agent_presence: agent_scan::AgentPresence,
     gemini: GeminiState,
-    connector: ConnectorSummary,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 struct GeminiState {
     is_configured: bool,
-    connector_active: bool,
-    daily_tokens: Option<u64>,
-    last_active_seconds_ago: Option<u64>,
-    model: Option<String>,
     cloud_available: bool,
     plan_type: Option<String>,
     quotas: Vec<gemini::GeminiQuotaEntry>,
     cloud_error: Option<String>,
     needs_login: bool,
-}
-
-#[derive(Serialize, Clone, Default, Debug)]
-#[serde(rename_all = "camelCase")]
-struct ConnectorSummary {
-    server_running: bool,
-    port: u16,
-    providers: Vec<connector_install::ProviderInstallStatus>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -126,6 +108,8 @@ struct PublicSettings {
     cached_org_uuid: Option<String>,
     #[serde(default)]
     claude_session_key: Option<String>,
+    #[serde(default)]
+    claude_account_label: Option<String>,
     #[serde(default)]
     consent_accepted: bool,
     #[serde(default = "default_language")]
@@ -166,6 +150,7 @@ impl Default for PublicSettings {
             height: None,
             cached_org_uuid: None,
             claude_session_key: None,
+            claude_account_label: None,
             consent_accepted: false,
             language: default_language(),
         }
@@ -179,7 +164,6 @@ struct AppState {
     session_cache: Mutex<session::SessionCache>,
     last_codex_good: Mutex<Option<CachedCodex>>,
     last_claude_good: Mutex<Option<CachedClaude>>,
-    connector_store: Arc<connector::ConnectorStore>,
 }
 
 #[derive(Clone)]
@@ -188,6 +172,7 @@ struct CachedCodex {
     plan_type: String,
     primary: WindowSlice,
     secondary: WindowSlice,
+    account_email: Option<String>,
 }
 
 #[derive(Clone)]
@@ -197,6 +182,7 @@ struct CachedClaude {
     secondary: WindowSlice,
     #[allow(dead_code)]
     org_uuid: String,
+    account_label: Option<String>,
 }
 
 #[derive(Default)]
@@ -264,6 +250,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 is_configured: false,
                 needs_login: false,
                 is_cached: false,
+                account_email: None,
             },
             claude: ClaudeState {
                 is_configured: false,
@@ -272,16 +259,15 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 secondary: WindowSlice::default(),
                 error: None,
                 is_cached: false,
+                account_label: None,
             },
             session_label: String::new(),
             display_mode: settings.display_mode.clone(),
             error: None,
-            agent_presence: agent_scan::AgentPresence::default(),
             gemini: GeminiState {
                 cloud_available: false,
                 ..GeminiState::default()
             },
-            connector: ConnectorSummary { server_running: true, port: CONNECTOR_PORT, providers: Vec::new() },
         };
     }
     let codex_future = codex::fetch_usage(settings.fetch_timeout_ms, settings.fetch_retries);
@@ -304,6 +290,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                     is_configured: true,
                     needs_login: false,
                     is_cached: false,
+                    account_email: u.account_email.clone(),
                 },
                 None,
             )
@@ -316,6 +303,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 is_configured: false,
                 needs_login: false,
                 is_cached: false,
+                account_email: None,
             },
             None,
         ),
@@ -327,6 +315,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 is_configured: true,
                 needs_login: true,
                 is_cached: false,
+                account_email: None,
             },
             Some(codex::CodexError::SessionExpired.to_string()),
         ),
@@ -339,6 +328,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                     is_configured: true,
                     needs_login: false,
                     is_cached: true,
+                    account_email: cached.account_email,
                 },
                 Some(msg),
             ),
@@ -350,6 +340,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                     is_configured: true,
                     needs_login: false,
                     is_cached: false,
+                    account_email: None,
                 },
                 Some(msg),
             ),
@@ -367,6 +358,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 secondary: u.secondary,
                 error: None,
                 is_cached: false,
+                account_label: u.account_label,
             }
         }
         Err(claude::ClaudeError::NotConfigured) => ClaudeState {
@@ -376,6 +368,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             secondary: WindowSlice::default(),
             error: None,
             is_cached: false,
+            account_label: None,
         },
         Err(claude::ClaudeError::SessionExpired) => ClaudeState {
             is_configured: true,
@@ -384,6 +377,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
             secondary: WindowSlice::default(),
             error: Some("Claude session expired. Please log in again.".into()),
             is_cached: false,
+            account_label: None,
         },
         Err(claude::ClaudeError::Other(msg)) => match read_claude_cache(app) {
             Some(cached) => ClaudeState {
@@ -393,6 +387,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 secondary: cached.secondary,
                 error: Some(msg),
                 is_cached: true,
+                account_label: cached.account_label,
             },
             None => ClaudeState {
                 is_configured: true,
@@ -401,6 +396,7 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
                 secondary: WindowSlice::default(),
                 error: Some(msg),
                 is_cached: false,
+                account_label: None,
             },
         },
     };
@@ -414,39 +410,13 @@ async fn build_widget_state(app: &tauri::AppHandle, settings: &PublicSettings) -
         session_label: load_session_label(app, settings),
         display_mode: settings.display_mode.clone(),
         error,
-        agent_presence: agent_scan::scan(),
-        gemini: build_gemini_state(app, gemini_result),
-        connector: build_connector_summary(app),
+        gemini: build_gemini_state(gemini_result),
     }
 }
 
 fn build_gemini_state(
-    app: &tauri::AppHandle,
     cloud_result: Result<gemini::GeminiQuotaResponse, gemini::GeminiError>,
 ) -> GeminiState {
-    let installed = connector_install::status_gemini(app).installed;
-    let snapshot = app
-        .try_state::<AppState>()
-        .and_then(|s| s.connector_store.get("gemini"));
-    let active_ttl = Duration::from_secs(5 * 60);
-
-    let connector_active = snapshot
-        .as_ref()
-        .is_some_and(|p| p.last_seen.elapsed() <= active_ttl);
-    let (daily_tokens, last_active_seconds_ago, model) = match snapshot {
-        Some(p) if p.last_seen.elapsed() <= active_ttl => (
-            Some(p.daily_tokens_total),
-            Some(p.last_seen.elapsed().as_secs()),
-            p.last_snapshot.model.clone(),
-        ),
-        Some(p) => (
-            (p.daily_tokens_total > 0).then_some(p.daily_tokens_total),
-            None,
-            None,
-        ),
-        None => (None, None, None),
-    };
-
     let (cloud_available, plan_type, quotas, cloud_error, needs_login) = match cloud_result {
         Ok(resp) => (true, resp.plan_type, resp.quotas, None, false),
         Err(gemini::GeminiError::NotConfigured) => (false, None, Vec::new(), None, false),
@@ -461,28 +431,12 @@ fn build_gemini_state(
     };
 
     GeminiState {
-        is_configured: installed || cloud_available,
-        connector_active,
-        daily_tokens,
-        last_active_seconds_ago,
-        model,
+        is_configured: cloud_available,
         cloud_available,
         plan_type,
         quotas,
         cloud_error,
         needs_login,
-    }
-}
-
-fn build_connector_summary(app: &tauri::AppHandle) -> ConnectorSummary {
-    ConnectorSummary {
-        server_running: true,
-        port: CONNECTOR_PORT,
-        providers: vec![
-            connector_install::status_gemini(app),
-            connector_install::status_claude(app),
-            connector_install::status_stub("codex"),
-        ],
     }
 }
 
@@ -504,6 +458,7 @@ fn store_codex_cache(app: &tauri::AppHandle, usage: &codex::CodexUsage) {
             plan_type: usage.plan_type.clone(),
             primary: usage.primary.clone(),
             secondary: usage.secondary.clone(),
+            account_email: usage.account_email.clone(),
         });
     };
 }
@@ -527,6 +482,7 @@ fn store_claude_cache(app: &tauri::AppHandle, usage: &claude::ClaudeUsage) {
             primary: usage.primary.clone(),
             secondary: usage.secondary.clone(),
             org_uuid: usage.org_uuid.clone(),
+            account_label: usage.account_label.clone(),
         });
     };
 }
@@ -650,13 +606,22 @@ async fn fetch_claude_with_fallback(
     }
     match settings.claude_session_key.as_ref() {
         Some(sk) if !sk.is_empty() => {
-            claude::fetch_usage_with_cookie(
+            let mut result = claude::fetch_usage_with_cookie(
                 settings.fetch_timeout_ms,
                 settings.fetch_retries,
                 sk,
                 settings.cached_org_uuid.clone(),
             )
-            .await
+            .await;
+            if let Ok(u) = result.as_mut() {
+                if u.account_label.is_none() {
+                    u.account_label = settings
+                        .claude_account_label
+                        .clone()
+                        .or_else(|| Some("claude.ai session".into()));
+                }
+            }
+            result
         }
         _ => bearer,
     }
@@ -869,7 +834,7 @@ async fn poll_claude_session_cookie(app: tauri::AppHandle) {
             continue;
         }
 
-        let resolved_uuid = claude::resolve_org_uuid_with_cookie(15_000, &session_key)
+        let resolved_org = claude::resolve_org_with_cookie(15_000, &session_key)
             .await
             .ok();
 
@@ -880,8 +845,9 @@ async fn poll_claude_session_cookie(app: tauri::AppHandle) {
                     Err(_) => return,
                 };
                 guard.claude_session_key = Some(session_key);
-                if let Some(uuid) = resolved_uuid {
+                if let Some((uuid, name)) = resolved_org {
                     guard.cached_org_uuid = Some(uuid);
+                    guard.claude_account_label = name;
                 }
                 guard.clone()
             };
@@ -909,6 +875,7 @@ async fn claude_logout(
         let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
         guard.claude_session_key = None;
         guard.cached_org_uuid = None;
+        guard.claude_account_label = None;
         guard.clone()
     };
     save_to_disk(&state.settings_path, &snapshot);
@@ -923,110 +890,6 @@ async fn claude_logout(
 #[tauri::command]
 async fn hide_widget(app: tauri::AppHandle) {
     app.exit(0);
-}
-
-#[tauri::command]
-async fn get_agent_office_state(
-    state: tauri::State<'_, AppState>,
-) -> Result<agent_office::AgentOfficeState, String> {
-    let store = state.connector_store.clone();
-    tokio::task::spawn_blocking(move || agent_office::scan(Some(store)))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn focus_session_window(cwd: String) -> Result<bool, String> {
-    let cwd_clone = cwd.clone();
-    tokio::task::spawn_blocking(move || focus_session::focus_for_cwd(&cwd_clone))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn close_agent_office(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("agent_office") {
-        window.close().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-async fn open_agent_office(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(existing) = app.get_webview_window("agent_office") {
-        existing.show().map_err(|e| e.to_string())?;
-        existing.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(
-        &app,
-        "agent_office",
-        WebviewUrl::App("agent-office.html".into()),
-    )
-    .title("Agent Office")
-    .inner_size(1280.0, 720.0)
-    .min_inner_size(800.0, 480.0)
-    .decorations(false)
-    .transparent(true)
-    .resizable(true)
-    .shadow(false)
-    .skip_taskbar(false)
-    .always_on_top(false)
-    .build()
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn connector_status(app: tauri::AppHandle) -> ConnectorSummary {
-    build_connector_summary(&app)
-}
-
-#[tauri::command]
-async fn install_connector(
-    app: tauri::AppHandle,
-    provider: String,
-) -> Result<ConnectorSummary, String> {
-    match provider.as_str() {
-        "gemini" => {
-            connector_install::install_gemini(&app)?;
-        }
-        "claude" => {
-            connector_install::install_claude(&app)?;
-        }
-        _ => return Err(format!("install for '{provider}' not yet supported")),
-    }
-    let summary = build_connector_summary(&app);
-    spawn_widget_refresh(app.clone());
-    Ok(summary)
-}
-
-fn spawn_widget_refresh(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let Some(state) = app.try_state::<AppState>() else { return };
-        let Some(settings) = state.settings.lock().ok().map(|g| g.clone()) else { return };
-        let widget_state = build_widget_state(&app, &settings).await;
-        emit_usage_update(&app, &settings, widget_state);
-    });
-}
-
-#[tauri::command]
-async fn uninstall_connector(
-    app: tauri::AppHandle,
-    provider: String,
-) -> Result<ConnectorSummary, String> {
-    match provider.as_str() {
-        "gemini" => {
-            connector_install::uninstall_gemini(&app)?;
-        }
-        "claude" => {
-            connector_install::uninstall_claude(&app)?;
-        }
-        _ => return Err(format!("uninstall for '{provider}' not yet supported")),
-    }
-    let summary = build_connector_summary(&app);
-    spawn_widget_refresh(app.clone());
-    Ok(summary)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1056,11 +919,6 @@ pub fn run() {
 
             sync_autostart(app.handle(), loaded.open_on_startup);
 
-            let connector_daily_path = settings_path
-                .parent()
-                .map(|p| p.join("connector_daily.json"))
-                .unwrap_or_else(|| PathBuf::from("connector_daily.json"));
-            let connector_store = Arc::new(connector::ConnectorStore::new(connector_daily_path));
             app.manage(AppState {
                 settings: Mutex::new(loaded),
                 settings_path,
@@ -1068,35 +926,6 @@ pub fn run() {
                 session_cache: Mutex::new(session::SessionCache::default()),
                 last_codex_good: Mutex::new(None),
                 last_claude_good: Mutex::new(None),
-                connector_store: connector_store.clone(),
-            });
-
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = connector::start_server(CONNECTOR_PORT, connector_store).await {
-                    eprintln!("connector server failed to start on 127.0.0.1:{CONNECTOR_PORT}: {e}");
-                }
-            });
-
-            let office_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(3000)).await;
-                    let Some(window) = office_handle.get_webview_window("agent_office") else {
-                        continue;
-                    };
-                    if !window.is_visible().unwrap_or(false) {
-                        continue;
-                    }
-                    let store = office_handle
-                        .try_state::<AppState>()
-                        .map(|st| st.connector_store.clone());
-                    let state = tokio::task::spawn_blocking(move || agent_office::scan(store))
-                        .await
-                        .ok();
-                    if let Some(s) = state {
-                        let _ = window.emit("agent-office:update", s);
-                    }
-                }
             });
 
             let app_handle = app.handle().clone();
@@ -1167,13 +996,6 @@ pub fn run() {
             claude_login,
             claude_logout,
             hide_widget,
-            get_agent_office_state,
-            open_agent_office,
-            close_agent_office,
-            focus_session_window,
-            connector_status,
-            install_connector,
-            uninstall_connector,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

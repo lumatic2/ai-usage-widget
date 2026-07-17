@@ -15,6 +15,7 @@ pub struct ClaudeUsage {
     pub primary: WindowSlice,
     pub secondary: WindowSlice,
     pub org_uuid: String,
+    pub account_label: Option<String>,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,33 @@ fn claude_home() -> PathBuf {
     PathBuf::from(profile).join(".claude")
 }
 
+#[derive(Deserialize)]
+pub struct OauthAccount {
+    #[serde(default, rename = "emailAddress")]
+    pub email_address: Option<String>,
+    #[serde(default, rename = "organizationUuid")]
+    pub organization_uuid: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ClaudeJson {
+    #[serde(default, rename = "oauthAccount")]
+    oauth_account: Option<OauthAccount>,
+}
+
+/// Account identity of the current Claude Code login (`~/.claude.json`).
+/// This file is rewritten on `claude login`, so it always matches the
+/// access token in `.credentials.json` — unlike the widget's cached org UUID.
+pub fn load_account_info() -> Option<OauthAccount> {
+    let profile = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    let path = PathBuf::from(profile).join(".claude.json");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let parsed: ClaudeJson = serde_json::from_str(&raw).ok()?;
+    parsed.oauth_account
+}
+
 pub fn load_credentials() -> Option<ClaudeCredentials> {
     let path = claude_home().join(".credentials.json");
     let raw = std::fs::read_to_string(&path).ok()?;
@@ -86,15 +114,39 @@ fn build_client(timeout_ms: u64) -> Result<reqwest::Client, ClaudeError> {
         .map_err(|e| ClaudeError::Other(e.to_string()))
 }
 
-async fn resolve_org_uuid(
+/// Parse `/api/organizations` response into (uuid, display name) of the first org.
+fn parse_first_org(body: &serde_json::Value) -> Option<(String, Option<String>)> {
+    let org = match body {
+        serde_json::Value::Array(arr) => arr.first()?,
+        serde_json::Value::Object(_) => body,
+        _ => return None,
+    };
+    let uuid = org
+        .get("uuid")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())?;
+    let name = org
+        .get("name")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Some((uuid, name))
+}
+
+async fn resolve_org(
     client: &reqwest::Client,
-    access_token: &str,
-) -> Result<String, ClaudeError> {
-    let resp = client
+    auth: &AuthHeader<'_>,
+) -> Result<(String, Option<String>), ClaudeError> {
+    let req = client
         .get(ORGS_URL)
-        .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", USER_AGENT);
+    let req = match auth {
+        AuthHeader::Bearer(t) => req.header("Authorization", format!("Bearer {t}")),
+        AuthHeader::Cookie(c) => req.header("Cookie", format!("sessionKey={c}")),
+    };
+    let resp = req
         .send()
         .await
         .map_err(|e| ClaudeError::Other(e.to_string()))?;
@@ -112,17 +164,7 @@ async fn resolve_org_uuid(
         .json()
         .await
         .map_err(|e| ClaudeError::Other(format!("organizations parse error: {e}")))?;
-    let uuid = match &body {
-        serde_json::Value::Array(arr) => arr
-            .first()
-            .and_then(|x| x.get("uuid"))
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        serde_json::Value::Object(_) => body.get("uuid").and_then(|x| x.as_str()).map(|s| s.to_string()),
-        _ => None,
-    };
-    uuid.filter(|s| !s.is_empty())
-        .ok_or_else(|| ClaudeError::Other("Claude org UUID not found".into()))
+    parse_first_org(&body).ok_or_else(|| ClaudeError::Other("Claude org UUID not found".into()))
 }
 
 fn parse_window(payload: Option<&serde_json::Value>) -> WindowSlice {
@@ -272,15 +314,52 @@ pub async fn fetch_usage(
 ) -> Result<ClaudeUsage, ClaudeError> {
     let creds = load_credentials().ok_or(ClaudeError::NotConfigured)?;
     let client = build_client(timeout_ms)?;
-    let org_uuid = match creds.organization_uuid.or(cached_org_uuid) {
-        Some(u) => u,
-        None => resolve_org_uuid(&client, &creds.access_token).await?,
-    };
-    let payload = fetch_usage_payload(&client, &creds.access_token, &org_uuid, max_retries).await?;
+    let account = load_account_info();
+    let account_label = account
+        .as_ref()
+        .and_then(|a| a.email_address.clone())
+        .filter(|s| !s.is_empty());
+    let account_org = account
+        .and_then(|a| a.organization_uuid)
+        .filter(|s| !s.is_empty());
+
+    // Prefer the org UUID of the *current* Claude Code login over cached values,
+    // so switching accounts (work <-> personal) picks up the right org.
+    let (org_uuid, resolved_fresh) =
+        match account_org.or(creds.organization_uuid).or(cached_org_uuid) {
+            Some(u) => (u, false),
+            None => {
+                let (uuid, _name) =
+                    resolve_org(&client, &AuthHeader::Bearer(&creds.access_token)).await?;
+                (uuid, true)
+            }
+        };
+
+    let (payload, org_uuid) =
+        match fetch_usage_payload(&client, &creds.access_token, &org_uuid, max_retries).await {
+            Ok(p) => (p, org_uuid),
+            // A cached/stored org UUID can belong to a previously signed-in
+            // account, which surfaces as a permission error. Re-resolve the org
+            // for the current token and retry once before reporting expiry.
+            Err(ClaudeError::SessionExpired) if !resolved_fresh => {
+                let (resolved, _name) =
+                    resolve_org(&client, &AuthHeader::Bearer(&creds.access_token)).await?;
+                if resolved == org_uuid {
+                    return Err(ClaudeError::SessionExpired);
+                }
+                let p =
+                    fetch_usage_payload(&client, &creds.access_token, &resolved, max_retries)
+                        .await?;
+                (p, resolved)
+            }
+            Err(e) => return Err(e),
+        };
+
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
         org_uuid,
+        account_label,
     })
 }
 
@@ -293,44 +372,12 @@ async fn fetch_usage_payload_with_cookie(
     fetch_usage_payload_inner(client, &AuthHeader::Cookie(session_key), org_uuid, max_retries).await
 }
 
-pub async fn resolve_org_uuid_with_cookie(
+pub async fn resolve_org_with_cookie(
     timeout_ms: u64,
     session_key: &str,
-) -> Result<String, ClaudeError> {
+) -> Result<(String, Option<String>), ClaudeError> {
     let client = build_client(timeout_ms)?;
-    let resp = client
-        .get(ORGS_URL)
-        .header("Cookie", format!("sessionKey={session_key}"))
-        .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
-        .send()
-        .await
-        .map_err(|e| ClaudeError::Other(e.to_string()))?;
-    let status = resp.status();
-    if status.as_u16() == 401 || status.as_u16() == 403 {
-        return Err(ClaudeError::SessionExpired);
-    }
-    if !status.is_success() {
-        return Err(ClaudeError::Other(format!(
-            "Claude organizations request failed: {}",
-            status.as_u16()
-        )));
-    }
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ClaudeError::Other(format!("organizations parse error: {e}")))?;
-    let uuid = match &body {
-        serde_json::Value::Array(arr) => arr
-            .first()
-            .and_then(|x| x.get("uuid"))
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string()),
-        serde_json::Value::Object(_) => body.get("uuid").and_then(|x| x.as_str()).map(|s| s.to_string()),
-        _ => None,
-    };
-    uuid.filter(|s| !s.is_empty())
-        .ok_or_else(|| ClaudeError::Other("Claude org UUID not found".into()))
+    resolve_org(&client, &AuthHeader::Cookie(session_key)).await
 }
 
 pub async fn fetch_usage_with_cookie(
@@ -340,14 +387,18 @@ pub async fn fetch_usage_with_cookie(
     cached_org_uuid: Option<String>,
 ) -> Result<ClaudeUsage, ClaudeError> {
     let client = build_client(timeout_ms)?;
-    let org_uuid = match cached_org_uuid {
-        Some(u) if !u.is_empty() => u,
-        _ => resolve_org_uuid_with_cookie(timeout_ms, session_key).await?,
+    let (org_uuid, account_label) = match cached_org_uuid {
+        Some(u) if !u.is_empty() => (u, None),
+        _ => {
+            let (uuid, name) = resolve_org(&client, &AuthHeader::Cookie(session_key)).await?;
+            (uuid, name)
+        }
     };
     let payload = fetch_usage_payload_with_cookie(&client, session_key, &org_uuid, max_retries).await?;
     Ok(ClaudeUsage {
         primary: parse_window(payload.get("five_hour")),
         secondary: parse_window(payload.get("seven_day")),
         org_uuid,
+        account_label,
     })
 }

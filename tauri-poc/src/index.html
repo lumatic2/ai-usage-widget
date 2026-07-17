@@ -18,7 +18,6 @@
       <div class="resize-handle resize-handle--se no-drag" data-resize="SouthEast"></div>
       <section class="card drag" data-tauri-drag-region>
         <div class="card-actions no-drag" id="cardActions">
-          <button class="settings-toggle" id="agentOfficeButton" type="button" aria-label="Open agent office" title="Agent Office">▦</button>
           <button class="settings-toggle" id="settingsToggleButton" type="button" aria-label="Open settings">⚙</button>
           <button class="hide" id="hideButton" type="button" aria-label="Hide widget">×</button>
         </div>
@@ -28,6 +27,7 @@
               <span class="title-text title-text--claude">CLAUDE</span>
               <span id="claudeStatusPill" hidden></span>
             </div>
+            <div class="account-tag" id="claudeAccountTag" hidden></div>
             <div class="stack stack--claude" id="claudeSection">
               <div class="pixel-card-wrap">
                 <div class="pixel-bar pixel-bar--purple" id="claudePrimaryBar">
@@ -67,6 +67,7 @@
               <span class="title-text">CODEX</span>
               <span id="codexStatusPill" hidden></span>
             </div>
+            <div class="account-tag" id="codexAccountTag" hidden></div>
             <div class="stack" id="codexSection">
               <div class="pixel-card-wrap">
                 <div class="pixel-bar pixel-bar--gold" id="codexPrimaryBar">
@@ -105,21 +106,8 @@
             <div class="stack stack--gemini" id="geminiSection">
               <div id="geminiQuotaList" class="stack" hidden></div>
               <div id="geminiFallback" class="gemini-fallback">
-                <div class="pixel-card-wrap">
-                  <div class="pixel-bar pixel-bar--blue" id="geminiTodayBar">
-                    <div class="bar-left">
-                      <img class="bar-icon" src="./icon-5h.svg" alt="" draggable="false" />
-                      <span class="bar-label">TODAY</span>
-                    </div>
-                    <span class="bar-value" id="geminiTodayValue">--</span>
-                  </div>
-                  <div class="reset-tag"><span class="reset-tag-text" id="geminiTodayTag">connector idle</span></div>
-                </div>
+                <span class="reset-tag-text" id="geminiTodayTag">no quota data</span>
               </div>
-            </div>
-            <div class="claude-login-wrap" id="geminiInstallWrap" hidden>
-              <button class="claude-login-btn no-drag" id="geminiInstallBtn" type="button">INSTALL HOOK</button>
-              <span class="claude-login-hint" id="geminiInstallHint">writes ~/.gemini/settings.json AfterModel hook</span>
             </div>
             <div class="error-banner" id="geminiErrorBanner" hidden>
               <span class="error-label">GEMINI</span>
@@ -127,23 +115,6 @@
               <button class="error-close no-drag" id="geminiErrorCloseButton" type="button">x</button>
             </div>
           </div>
-        </div>
-        <div class="agent-strip no-drag" id="agentStrip" hidden>
-          <span class="agent-chip" data-agent="claude" id="agentChipClaude">
-            <span class="agent-dot"></span>
-            <span class="agent-name">CLAUDE</span>
-            <span class="agent-count" id="agentClaudeCount"></span>
-          </span>
-          <span class="agent-chip" data-agent="codex" id="agentChipCodex">
-            <span class="agent-dot"></span>
-            <span class="agent-name">CODEX</span>
-            <span class="agent-count" id="agentCodexCount"></span>
-          </span>
-          <span class="agent-chip" data-agent="gemini" id="agentChipGemini">
-            <span class="agent-dot"></span>
-            <span class="agent-name">GEMINI</span>
-            <span class="agent-count" id="agentGeminiCount"></span>
-          </span>
         </div>
         <section class="settings-panel no-drag" id="settingsPanel" hidden>
           <div class="settings-row">
@@ -203,7 +174,6 @@
           </div>
           <div class="settings-actions settings-actions--secondary">
             <button class="settings-btn settings-btn--link" id="claudeLogoutButton" type="button" data-i18n="settings.claudeLogout">Claude Logout</button>
-            <button class="settings-btn settings-btn--link" id="geminiUninstallButton" type="button" data-i18n="settings.geminiUninstall" hidden>Gemini Uninstall</button>
           </div>
           <div class="settings-note" data-i18n="settings.autostartNote">Auto-start applies to packaged app.</div>
         </section>

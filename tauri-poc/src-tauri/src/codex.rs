@@ -35,6 +35,7 @@ const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 #[derive(Debug, Clone)]
 pub struct CodexUsage {
     pub plan_type: String,
+    pub account_email: Option<String>,
     pub primary: WindowSlice,
     pub secondary: WindowSlice,
 }
@@ -44,6 +45,7 @@ struct AuthTokens {
     access_token: Option<String>,
     account_id: Option<String>,
     refresh_token: Option<String>,
+    id_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +78,22 @@ fn load_auth() -> Result<AuthFile, CodexError> {
         .map_err(|e| CodexError::Other(format!("auth.json parse error: {e}")))
 }
 
+/// Extract the signed-in account email from the OpenAI id_token JWT payload.
+/// Decoded locally only — the token itself never leaves the machine for this.
+pub fn email_from_id_token(id_token: &str) -> Option<String> {
+    use base64::Engine;
+    let payload = id_token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim())
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    claims
+        .get("email")
+        .and_then(|e| e.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn parse_window(v: Option<&serde_json::Value>) -> WindowSlice {
     let Some(obj) = v else {
         return WindowSlice {
@@ -95,7 +113,9 @@ pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage
         access_token: None,
         account_id: None,
         refresh_token: None,
+        id_token: None,
     });
+    let account_email = tokens.id_token.as_deref().and_then(email_from_id_token);
     let access_token = tokens
         .access_token
         .or(auth.openai_api_key)
@@ -122,9 +142,37 @@ pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<CodexUsage
 
     Ok(CodexUsage {
         plan_type,
+        account_email,
         primary,
         secondary,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::email_from_id_token;
+    use base64::Engine;
+
+    fn fake_jwt(payload: &str) -> String {
+        let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+        format!("{}.{}.{}", b64("{\"alg\":\"RS256\"}"), b64(payload), b64("sig"))
+    }
+
+    #[test]
+    fn extracts_email_from_jwt_payload() {
+        let token = fake_jwt("{\"email\":\"user@example.com\",\"sub\":\"x\"}");
+        assert_eq!(
+            email_from_id_token(&token),
+            Some("user@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_email_yields_none() {
+        assert_eq!(email_from_id_token(&fake_jwt("{\"sub\":\"x\"}")), None);
+        assert_eq!(email_from_id_token(&fake_jwt("{\"email\":\"  \"}")), None);
+        assert_eq!(email_from_id_token("not-a-jwt"), None);
+    }
 }
 
 async fn send_with_retries(

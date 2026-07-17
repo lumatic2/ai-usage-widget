@@ -23,10 +23,6 @@
     claudeLogout: () => invoke('claude_logout'),
     acceptConsent: (showClaude, showCodex) => invoke('accept_consent', { showClaude, showCodex }),
     hide: () => invoke('hide_widget'),
-    installConnector: (provider) => invoke('install_connector', { provider }),
-    uninstallConnector: (provider) => invoke('uninstall_connector', { provider }),
-    connectorStatus: () => invoke('connector_status'),
-    openAgentOffice: () => invoke('open_agent_office'),
     onState: (cb) => {
       let unlistenFn = null;
       listen('widget-state', (e) => cb(e.payload)).then((u) => { unlistenFn = u; });
@@ -54,6 +50,8 @@ const claudeSecondaryProgress = document.getElementById('claudeSecondaryProgress
 const claudePrimaryReset = document.getElementById('claudePrimaryReset');
 const claudeSecondaryReset = document.getElementById('claudeSecondaryReset');
 const claudeStatusPill = document.getElementById('claudeStatusPill');
+const claudeAccountTag = document.getElementById('claudeAccountTag');
+const codexAccountTag = document.getElementById('codexAccountTag');
 const claudeLoginWrap = document.getElementById('claudeLoginWrap');
 const claudeLoginBtn = document.getElementById('claudeLoginBtn');
 const hideButton = document.getElementById('hideButton');
@@ -64,12 +62,6 @@ const claudeErrorBanner = document.getElementById('claudeErrorBanner');
 const claudeErrorText = document.getElementById('claudeErrorText');
 const claudeErrorCloseButton = document.getElementById('claudeErrorCloseButton');
 const settingsToggleButton = document.getElementById('settingsToggleButton');
-const agentOfficeButton = document.getElementById('agentOfficeButton');
-if (agentOfficeButton) {
-  agentOfficeButton.addEventListener('click', () => {
-    window.codexWidget.openAgentOffice().catch((err) => console.error('openAgentOffice failed', err));
-  });
-}
 const settingsPanel = document.getElementById('settingsPanel');
 const twoCol = document.querySelector('.two-col');
 const claudeColumn = document.querySelector('.col--claude');
@@ -86,27 +78,15 @@ const showCodexInput = document.getElementById('showCodexInput');
 const settingsSaveButton = document.getElementById('settingsSaveButton');
 const settingsRefreshButton = document.getElementById('settingsRefreshButton');
 const claudeLogoutButton = document.getElementById('claudeLogoutButton');
-const agentStrip = document.getElementById('agentStrip');
-const agentChipClaude = document.getElementById('agentChipClaude');
-const agentChipCodex = document.getElementById('agentChipCodex');
-const agentChipGemini = document.getElementById('agentChipGemini');
-const agentClaudeCount = document.getElementById('agentClaudeCount');
-const agentCodexCount = document.getElementById('agentCodexCount');
-const agentGeminiCount = document.getElementById('agentGeminiCount');
 const geminiColumn = document.querySelector('.col--gemini');
 const geminiSection = document.getElementById('geminiSection');
 const geminiQuotaList = document.getElementById('geminiQuotaList');
 const geminiFallback = document.getElementById('geminiFallback');
-const geminiTodayBar = document.getElementById('geminiTodayBar');
-const geminiTodayValue = document.getElementById('geminiTodayValue');
 const geminiTodayTag = document.getElementById('geminiTodayTag');
-const geminiInstallWrap = document.getElementById('geminiInstallWrap');
-const geminiInstallBtn = document.getElementById('geminiInstallBtn');
 const geminiErrorBanner = document.getElementById('geminiErrorBanner');
 const geminiErrorText = document.getElementById('geminiErrorText');
 const geminiErrorCloseButton = document.getElementById('geminiErrorCloseButton');
 const showGeminiInput = document.getElementById('showGeminiInput');
-const geminiUninstallButton = document.getElementById('geminiUninstallButton');
 const I18N = {
   en: {
     'settings.language': 'Language',
@@ -285,34 +265,14 @@ function render(state) {
 
   renderClaudeSection(state.claude, displayMode);
   renderGeminiSection(state.gemini);
-  renderAgentStrip(state.agentPresence);
-  syncConnectorControls(state.connector);
-}
-
-function formatTokenCount(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '--';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function formatActiveAgo(seconds) {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return 'connector idle';
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${Math.round(seconds)}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  return `${Math.round(seconds / 3600)}h ago`;
 }
 
 function renderGeminiSection(state) {
   const s = state || {};
   const cloudAvailable = Boolean(s.cloudAvailable);
-  const installed = Boolean(s.isConfigured);
-  const active = Boolean(s.connectorActive);
   const hasCloud = cloudAvailable && Array.isArray(s.quotas) && s.quotas.length > 0;
 
-  geminiSection.classList.toggle('stack--disabled', !installed && !hasCloud);
-  geminiInstallWrap.hidden = installed || hasCloud;
+  geminiSection.classList.toggle('stack--disabled', !hasCloud);
 
   if (hasCloud) {
     geminiQuotaList.hidden = false;
@@ -323,15 +283,7 @@ function renderGeminiSection(state) {
 
   geminiQuotaList.hidden = true;
   geminiFallback.hidden = false;
-  if (!installed) {
-    geminiTodayValue.textContent = '--';
-    geminiTodayTag.textContent = s.cloudError ? 'cloud quota unavailable' : 'hook not installed';
-  } else {
-    geminiTodayValue.textContent = formatTokenCount(s.dailyTokens);
-    geminiTodayTag.textContent = typeof s.dailyTokens === 'number'
-      ? (active ? 'live' : 'last seen earlier today')
-      : 'waiting for first turn';
-  }
+  geminiTodayTag.textContent = s.cloudError ? 'cloud quota unavailable' : 'no quota data';
 }
 
 function renderGeminiQuotaList(quotas) {
@@ -393,27 +345,11 @@ function formatResetAtIso(iso) {
   } catch (_) { return ''; }
 }
 
-function syncConnectorControls(summary) {
-  const providers = (summary && Array.isArray(summary.providers)) ? summary.providers : [];
-  const gemini = providers.find((p) => p.provider === 'gemini');
-  const installed = Boolean(gemini && gemini.installed);
-  geminiUninstallButton.hidden = !installed;
-}
-
-function renderAgentStrip(presence) {
-  if (!presence) {
-    agentStrip.hidden = true;
-    return;
-  }
-  agentStrip.hidden = false;
-  const set = (chip, countEl, n) => {
-    const active = Number(n) > 0;
-    chip.classList.toggle('is-active', active);
-    countEl.textContent = active && n > 1 ? `×${n}` : '';
-  };
-  set(agentChipClaude, agentClaudeCount, presence.claudeCount);
-  set(agentChipCodex, agentCodexCount, presence.codexCount);
-  set(agentChipGemini, agentGeminiCount, presence.geminiCount);
+function renderAccountTag(el, label) {
+  const text = typeof label === 'string' ? label.trim() : '';
+  el.hidden = !text;
+  el.textContent = text;
+  el.title = text;
 }
 
 function renderCodexSection(state, displayMode) {
@@ -422,6 +358,11 @@ function renderCodexSection(state, displayMode) {
   const needsLogin = Boolean(codexState.needsLogin);
   const isCached = Boolean(codexState.isCached);
   const disable = !isConfigured || needsLogin;
+
+  const planSuffix = state.planType && state.planType !== 'CODEX' && state.planType !== 'UNKNOWN'
+    ? ` · ${String(state.planType).toLowerCase()}`
+    : '';
+  renderAccountTag(codexAccountTag, codexState.accountEmail ? codexState.accountEmail + planSuffix : '');
 
   codexSection.classList.toggle('stack--disabled', disable);
   codexPrimaryBar.classList.toggle('pixel-bar--disabled', disable);
@@ -480,6 +421,7 @@ function renderClaudeSection(claudeState, displayMode) {
   claudePrimaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
   claudeSecondaryBar.classList.toggle('pixel-bar--stale', isCached && !disableBars);
   claudeLoginWrap.hidden = !disableBars;
+  renderAccountTag(claudeAccountTag, state.accountLabel);
 
   if (!isConfigured) {
     claudePrimaryValue.textContent = '--%';
@@ -718,18 +660,18 @@ claudeLoginBtn.addEventListener('click', async () => {
   claudeLoginBtn.disabled = true;
   claudeLoginBtn.textContent = 'OPENING...';
   try {
-    const result = await window.codexWidget.claudeLogin();
-    if (!result?.success) {
-      currentClaudeErrorKey = String(result?.error || 'Claude login failed.');
-      claudeErrorText.textContent = currentClaudeErrorKey;
-      claudeErrorBanner.hidden = false;
-      if (claudeLoginErrorTimeout) {
-        clearTimeout(claudeLoginErrorTimeout);
-      }
-      claudeLoginErrorTimeout = setTimeout(() => {
-        claudeErrorBanner.hidden = true;
-      }, 4000);
+    // claude_login resolves with no payload on success and rejects on failure.
+    await window.codexWidget.claudeLogin();
+  } catch (err) {
+    currentClaudeErrorKey = String(err || 'Claude login failed.');
+    claudeErrorText.textContent = currentClaudeErrorKey;
+    claudeErrorBanner.hidden = false;
+    if (claudeLoginErrorTimeout) {
+      clearTimeout(claudeLoginErrorTimeout);
     }
+    claudeLoginErrorTimeout = setTimeout(() => {
+      claudeErrorBanner.hidden = true;
+    }, 4000);
   } finally {
     claudeLoginBtn.disabled = false;
     claudeLoginBtn.textContent = 'LOGIN';
@@ -745,33 +687,6 @@ claudeLogoutButton.addEventListener('click', async () => {
   }
 });
 
-geminiInstallBtn.addEventListener('click', async () => {
-  geminiInstallBtn.disabled = true;
-  const originalText = geminiInstallBtn.textContent;
-  geminiInstallBtn.textContent = 'INSTALLING...';
-  try {
-    await window.codexWidget.installConnector('gemini');
-  } catch (e) {
-    geminiErrorText.textContent = String(e || 'install failed');
-    geminiErrorBanner.hidden = false;
-  } finally {
-    geminiInstallBtn.disabled = false;
-    geminiInstallBtn.textContent = originalText;
-  }
-});
-
 geminiErrorCloseButton.addEventListener('click', () => {
   geminiErrorBanner.hidden = true;
-});
-
-geminiUninstallButton.addEventListener('click', async () => {
-  geminiUninstallButton.disabled = true;
-  try {
-    await window.codexWidget.uninstallConnector('gemini');
-  } catch (e) {
-    geminiErrorText.textContent = String(e || 'uninstall failed');
-    geminiErrorBanner.hidden = false;
-  } finally {
-    geminiUninstallButton.disabled = false;
-  }
 });
