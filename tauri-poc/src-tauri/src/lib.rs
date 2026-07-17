@@ -708,6 +708,23 @@ fn clamp_u64(v: u64, min: u64, max: u64) -> u64 {
     v.clamp(min, max)
 }
 
+/// mtimes of the CLI credential files. Any change means a login switch or a
+/// token refresh — either way the widget should re-fetch immediately.
+fn auth_files_fingerprint() -> (u128, u128) {
+    fn mtime_nanos(path: &std::path::Path) -> u128 {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    }
+    (
+        mtime_nanos(&claude::credentials_path()),
+        mtime_nanos(&codex::auth_path()),
+    )
+}
+
 use widget_core::{normalize_display_mode, sanitize_thresholds_with_default};
 
 fn sanitize(mut s: PublicSettings) -> PublicSettings {
@@ -1013,6 +1030,43 @@ pub fn run() {
                     };
                     let state = build_widget_state(&app_handle, &settings).await;
                     emit_usage_update(&app_handle, &settings, state);
+                }
+            });
+
+            // Follow account switches: when `claude login` / `codex` rewrite
+            // their credential files, drop last-good caches and alert state
+            // (they belong to the previous account) and refresh right away
+            // instead of waiting out the regular interval.
+            let watcher_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut last = auth_files_fingerprint();
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    let current = auth_files_fingerprint();
+                    if current == last {
+                        continue;
+                    }
+                    last = current;
+                    // Let the CLI finish writing before reading credentials.
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let Some(state) = watcher_handle.try_state::<AppState>() else {
+                        continue;
+                    };
+                    if let Ok(mut guard) = state.last_claude_good.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = state.last_codex_good.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = state.alert_state.lock() {
+                        *guard = UsageAlertState::default();
+                    }
+                    let settings = match state.settings.lock().ok().map(|g| g.clone()) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let widget_state = build_widget_state(&watcher_handle, &settings).await;
+                    emit_usage_update(&watcher_handle, &settings, widget_state);
                 }
             });
 

@@ -68,8 +68,13 @@ fn codex_home() -> PathBuf {
     PathBuf::from(profile).join(".codex")
 }
 
+/// Rewritten by `codex` login/refresh — watched by lib.rs to follow account switches.
+pub fn auth_path() -> PathBuf {
+    codex_home().join("auth.json")
+}
+
 fn load_auth() -> Result<AuthFile, CodexError> {
-    let path = codex_home().join("auth.json");
+    let path = auth_path();
     if !path.exists() {
         return Err(CodexError::NotConfigured);
     }

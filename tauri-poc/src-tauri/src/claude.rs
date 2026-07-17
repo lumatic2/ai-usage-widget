@@ -102,8 +102,13 @@ pub fn load_account_info() -> Option<OauthAccount> {
     parsed.oauth_account
 }
 
+/// Rewritten by `claude login` — watched by lib.rs to follow account switches.
+pub fn credentials_path() -> PathBuf {
+    claude_home().join(".credentials.json")
+}
+
 pub fn load_credentials() -> Option<ClaudeCredentials> {
-    let path = claude_home().join(".credentials.json");
+    let path = credentials_path();
     let raw = std::fs::read_to_string(&path).ok()?;
     let parsed: CredentialsFile = serde_json::from_str(&raw).ok()?;
     let oauth = parsed.claude_ai_oauth?;
