@@ -93,13 +93,24 @@ struct ClaudeJson {
 /// This file is rewritten on `claude login`, so it always matches the
 /// access token in `.credentials.json` — unlike the widget's cached org UUID.
 pub fn load_account_info() -> Option<OauthAccount> {
-    let profile = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_default();
-    let path = PathBuf::from(profile).join(".claude.json");
+    let path = account_info_path();
     let raw = std::fs::read_to_string(&path).ok()?;
     let parsed: ClaudeJson = serde_json::from_str(&raw).ok()?;
     parsed.oauth_account
+}
+
+pub fn account_info_path() -> PathBuf {
+    let profile = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    PathBuf::from(profile).join(".claude.json")
+}
+
+pub fn current_account_email() -> Option<String> {
+    load_account_info()
+        .and_then(|account| account.email_address)
+        .map(|email| email.trim().to_ascii_lowercase())
+        .filter(|email| !email.is_empty())
 }
 
 /// Rewritten by `claude login` — watched by lib.rs to follow account switches.
@@ -373,10 +384,7 @@ pub async fn fetch_usage(timeout_ms: u64, max_retries: u32) -> Result<ClaudeUsag
         max_retries,
     )
     .await?;
-    let email = load_account_info()
-        .and_then(|a| a.email_address)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let email = current_account_email();
     let account_label = email.map(|e| match &creds.subscription_type {
         Some(sub) => format!("{e} · {sub}"),
         None => e,

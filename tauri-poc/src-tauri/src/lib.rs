@@ -193,8 +193,8 @@ struct CachedClaude {
     fetched_at: Instant,
     primary: WindowSlice,
     secondary: WindowSlice,
-    #[allow(dead_code)]
     org_uuid: String,
+    oauth_account_email: Option<String>,
     account_label: Option<String>,
     scoped: Vec<claude::ScopedWindow>,
 }
@@ -514,6 +514,11 @@ fn store_claude_cache(app: &tauri::AppHandle, usage: &claude::ClaudeUsage) {
             primary: usage.primary.clone(),
             secondary: usage.secondary.clone(),
             org_uuid: usage.org_uuid.clone(),
+            oauth_account_email: usage
+                .org_uuid
+                .is_empty()
+                .then(claude::current_account_email)
+                .flatten(),
             account_label: usage.account_label.clone(),
             scoped: usage.scoped.clone(),
         });
@@ -523,6 +528,19 @@ fn store_claude_cache(app: &tauri::AppHandle, usage: &claude::ClaudeUsage) {
 fn read_claude_cache(app: &tauri::AppHandle) -> Option<CachedClaude> {
     let state = app.try_state::<AppState>()?;
     let mut guard = state.last_claude_good.lock().ok()?;
+
+    let current_account_email = claude::current_account_email();
+    let account_changed = guard.as_ref().is_some_and(|cached| {
+        cached.org_uuid.is_empty()
+            && !oauth_cache_matches_account(
+                cached.oauth_account_email.as_deref(),
+                current_account_email.as_deref(),
+            )
+    });
+    if account_changed {
+        *guard = None;
+        return None;
+    }
 
     let rolled_over = guard.as_ref().is_some_and(|cached| {
         matches!(cached.primary.reset_after_seconds, Some(reset)
@@ -538,6 +556,39 @@ fn read_claude_cache(app: &tauri::AppHandle) -> Option<CachedClaude> {
         Some(cached.clone())
     } else {
         None
+    }
+}
+
+fn oauth_cache_matches_account(cached_email: Option<&str>, current_email: Option<&str>) -> bool {
+    cached_email == current_email
+}
+
+#[cfg(test)]
+mod account_cache_tests {
+    use super::oauth_cache_matches_account;
+
+    #[test]
+    fn accepts_cache_for_same_oauth_account() {
+        assert!(oauth_cache_matches_account(
+            Some("current@example.com"),
+            Some("current@example.com")
+        ));
+    }
+
+    #[test]
+    fn rejects_cache_after_oauth_account_switch() {
+        assert!(!oauth_cache_matches_account(
+            Some("previous@example.com"),
+            Some("current@example.com")
+        ));
+    }
+
+    #[test]
+    fn rejects_identified_cache_when_profile_is_temporarily_missing() {
+        assert!(!oauth_cache_matches_account(
+            Some("previous@example.com"),
+            None
+        ));
     }
 }
 
@@ -708,9 +759,9 @@ fn clamp_u64(v: u64, min: u64, max: u64) -> u64 {
     v.clamp(min, max)
 }
 
-/// mtimes of the CLI credential files. Any change means a login switch or a
-/// token refresh — either way the widget should re-fetch immediately.
-fn auth_files_fingerprint() -> (u128, u128) {
+/// mtimes of the CLI credential and account-profile files. Any change means a
+/// login switch or token refresh, so the widget should re-fetch immediately.
+fn auth_files_fingerprint() -> (u128, u128, u128) {
     fn mtime_nanos(path: &std::path::Path) -> u128 {
         std::fs::metadata(path)
             .and_then(|m| m.modified())
@@ -721,6 +772,7 @@ fn auth_files_fingerprint() -> (u128, u128) {
     }
     (
         mtime_nanos(&claude::credentials_path()),
+        mtime_nanos(&claude::account_info_path()),
         mtime_nanos(&codex::auth_path()),
     )
 }
